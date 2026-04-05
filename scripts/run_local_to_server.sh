@@ -4,9 +4,19 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
+# Resolve the app database URL via AdIntel settings (.env-aware) unless explicitly overridden.
+DEFAULT_ADINTEL_DATABASE_URL="$(
+  cd "${ROOT_DIR}"
+  ./.venv/bin/python - <<'PY'
+from adintel.core.settings import get_settings
+
+print(get_settings().database_url)
+PY
+)"
+
 # Edit these values before running the script.
-SERVER_DATABASE_URL="${SERVER_DATABASE_URL:-postgresql://yongcheng:Feedmob2026%21@127.0.0.1:5433/adinteldb}"
-ADINTEL_DATABASE_URL="${ADINTEL_DATABASE_URL:-postgresql+psycopg://yongcheng:Feedmob2026%21@127.0.0.1:5433/adinteldb}"
+ADINTEL_DATABASE_URL="${ADINTEL_DATABASE_URL:-${DEFAULT_ADINTEL_DATABASE_URL}}"
+SERVER_DATABASE_URL="${SERVER_DATABASE_URL:-${ADINTEL_DATABASE_URL/postgresql+psycopg/postgresql}}"
 ADVERTISER_NAME="${ADVERTISER_NAME:-}"
 RUN_ALL_FROM_CONFIG="${RUN_ALL_FROM_CONFIG:-true}"
 PLATFORM="${PLATFORM:-sensortower}"

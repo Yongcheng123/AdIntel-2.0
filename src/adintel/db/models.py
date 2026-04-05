@@ -69,10 +69,10 @@ class RequestedAdvertiserRecord(Base):
 
 
 class SensorTowerDownloadRecord(Base):
-    __tablename__ = "st_downloads"
+    __tablename__ = "sensortower_downloads"
     __table_args__ = (
         UniqueConstraint(
-            "advertiser_name", "period_date", "granularity", "country", "os", name="uq_st_downloads"
+            "advertiser_name", "period_date", "granularity", "country", "os", name="uq_sensortower_downloads"
         ),
     )
 
@@ -88,9 +88,9 @@ class SensorTowerDownloadRecord(Base):
 
 
 class SensorTowerUsageRecord(Base):
-    __tablename__ = "st_usage"
+    __tablename__ = "sensortower_usage"
     __table_args__ = (
-        UniqueConstraint("advertiser_name", "period_date", "country", name="uq_st_usage"),
+        UniqueConstraint("advertiser_name", "period_date", "country", name="uq_sensortower_usage"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -104,9 +104,9 @@ class SensorTowerUsageRecord(Base):
 
 
 class SensorTowerRetentionRecord(Base):
-    __tablename__ = "st_retention"
+    __tablename__ = "sensortower_retention"
     __table_args__ = (
-        UniqueConstraint("advertiser_name", "cohort_date", "country", name="uq_st_retention"),
+        UniqueConstraint("advertiser_name", "cohort_date", "country", name="uq_sensortower_retention"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -123,10 +123,10 @@ class SensorTowerRetentionRecord(Base):
 
 
 class SensorTowerImpressionShareRecord(Base):
-    __tablename__ = "st_impression_share"
+    __tablename__ = "sensortower_impression_share"
     __table_args__ = (
         UniqueConstraint(
-            "advertiser_name", "period_date", "network", "country", name="uq_st_impression_share"
+            "advertiser_name", "period_date", "network", "country", name="uq_sensortower_impression_share"
         ),
     )
 
@@ -140,9 +140,9 @@ class SensorTowerImpressionShareRecord(Base):
 
 
 class SensorTowerDemographicRecord(Base):
-    __tablename__ = "st_demographics"
+    __tablename__ = "sensortower_demographics"
     __table_args__ = (
-        UniqueConstraint("advertiser_name", "country", "age_bracket", name="uq_st_demographics"),
+        UniqueConstraint("advertiser_name", "country", "age_bracket", name="uq_sensortower_demographics"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -155,10 +155,10 @@ class SensorTowerDemographicRecord(Base):
 
 
 class SensorTowerRankingRecord(Base):
-    __tablename__ = "st_rankings"
+    __tablename__ = "sensortower_rankings"
     __table_args__ = (
         UniqueConstraint(
-            "advertiser_name", "rank_date", "country", "category", "chart_type", name="uq_st_rankings"
+            "advertiser_name", "rank_date", "country", "category", "chart_type", name="uq_sensortower_rankings"
         ),
     )
 
@@ -174,9 +174,9 @@ class SensorTowerRankingRecord(Base):
 
 
 class SensorTowerReviewRecord(Base):
-    __tablename__ = "st_reviews"
+    __tablename__ = "sensortower_reviews"
     __table_args__ = (
-        UniqueConstraint("advertiser_name", "period_date", "country", name="uq_st_reviews"),
+        UniqueConstraint("advertiser_name", "period_date", "country", name="uq_sensortower_reviews"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -194,9 +194,9 @@ class SensorTowerReviewRecord(Base):
 
 
 class SensorTowerReviewTextRecord(Base):
-    __tablename__ = "st_review_texts"
+    __tablename__ = "sensortower_review_texts"
     __table_args__ = (
-        UniqueConstraint("advertiser_name", "review_id", name="uq_st_review_texts"),
+        UniqueConstraint("advertiser_name", "review_id", name="uq_sensortower_review_texts"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -216,9 +216,9 @@ class SensorTowerReviewTextRecord(Base):
 
 
 class SensorTowerCreativeRecord(Base):
-    __tablename__ = "st_creatives"
+    __tablename__ = "sensortower_creatives"
     __table_args__ = (
-        UniqueConstraint("advertiser_name", "creative_id", name="uq_st_creatives"),
+        UniqueConstraint("advertiser_name", "creative_id", name="uq_sensortower_creatives"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -233,9 +233,11 @@ class SensorTowerCreativeRecord(Base):
 
 
 class SensorTowerAsoKeywordRecord(Base):
-    __tablename__ = "st_aso_keywords"
+    __tablename__ = "sensortower_aso_keywords"
     __table_args__ = (
-        UniqueConstraint("advertiser_name", "keyword", "country", "device", name="uq_st_aso_keywords"),
+        UniqueConstraint(
+            "advertiser_name", "keyword", "country", "device", name="uq_sensortower_aso_keywords"
+        ),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)

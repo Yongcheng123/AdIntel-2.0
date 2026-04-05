@@ -1,57 +1,160 @@
 # AdIntel
 
-AdIntel is a Python-first competitive intelligence workspace. It scrapes ad and app intelligence platforms locally, writes normalized data to a shared PostgreSQL database (Neon), and exposes a read-only MCP server so Claude can query the data.
+AdIntel is a local-first scraping and intelligence workspace.
 
-## Data Flow
+It does three things:
 
-```
-Your Mac (local only)              Neon PostgreSQL             Vercel (MCP server)
-──────────────────────────         ─────────────────           ────────────────────
-Browser scrapes SensorTower
-  └─ adintel collect …       ───→  st_downloads
-  └─ run_local_to_server.sh        st_reviews          ←───   adintel MCP tools
-                                   st_rankings                 served to Claude
-                                   scrape_runs, …
-```
+1. runs SensorTower collection locally with your browser session
+2. stores normalized data in Neon Postgres
+3. exposes a read-only MCP server so clients like Claude, Codex, and Antigravity can query that data
 
-**Collection runs locally. Vercel is read-only. Neon is the shared truth.**
+## Architecture
 
----
+```text
+Local machine
+  -> SensorTower login/session
+  -> Playwright collection
+  -> writes to Neon
 
-## Where Data Goes — At a Glance
+Neon Postgres
+  -> shared source of truth
+  -> advertiser catalog
+  -> SensorTower metric tables
+  -> scrape run history
 
-| Command / Script | Writes to Neon? | Notes |
-|---|---|---|
-| `adintel login sensortower` | ❌ Local only | Saves browser session to `state/browser/` |
-| `adintel collect advertiser <name>` | ✅ Yes | Writes metric rows to Neon via `ADINTEL_DATABASE_URL` |
-| `adintel collect stale` | ✅ Yes | Same as above, for all stale advertisers |
-| `bash scripts/run_local_to_server.sh` | ✅ Yes | Applies schema + syncs catalog + runs collection |
-| `adintel advertisers sync-catalog` | ✅ Yes | Syncs `config/advertisers.yaml` into the `advertisers` table |
-| `adintel init-db` | ✅ Yes | Applies `sql/schema.sql` to the configured database |
-| `adintel mcp` | ❌ Local only | Starts a local stdio MCP server (for Claude Desktop) |
-| Vercel MCP server | ❌ Read only | Only queries Neon — never writes |
-
----
-
-## Project Layout
-
-```
-src/adintel/         application package
-  cli/               CLI entry point (adintel …)
-  collectors/        orchestration layer (CollectorService)
-  platforms/         SensorTower collector + parsers; AdClarity stub
-  db/                SQLAlchemy models, repositories, session management
-  mcp/               MCP server (FastMCP)
-  core/              settings, models, browser manager, alerts
-
-config/              YAML advertiser catalog (edit this to add advertisers)
-sql/schema.sql       canonical PostgreSQL schema (source of truth)
-scripts/             run_local_to_server.sh, migrate_server_db.sh
-api/index.py         Vercel entry point for the MCP HTTP server
-tests/               pytest test suite
+Vercel MCP
+  -> reads from Neon
+  -> exposes tools over MCP HTTP
+  -> does not scrape
 ```
 
----
+The key separation is:
+
+- collection runs locally
+- the database is shared
+- the hosted MCP server is read-only
+
+## What This MCP Can Do
+
+The AdIntel MCP server can:
+
+- list advertisers stored in the database
+- summarize the latest SensorTower data for an advertiser
+- show collection health and alerts
+- show recent collection runs and saved metadata
+- return metric time series
+- compare advertisers side by side
+- log advertiser requests for later onboarding
+- return the canonical schema text
+
+## MCP Tools
+
+The current hosted MCP server exposes these tools:
+
+- `list_advertisers`
+  - list advertisers currently stored in AdIntel
+- `get_advertiser_summary`
+  - latest SensorTower summary for an advertiser
+- `request_advertiser`
+  - log a missing advertiser for later onboarding
+- `list_requested_advertisers`
+  - view requested advertisers not yet onboarded
+- `read_schema_text`
+  - return the canonical SQL schema text
+- `get_collection_health`
+  - view freshness, failures, and recent success state
+- `get_collection_alerts`
+  - surface stale data and repeated collection failures
+- `get_recent_collection_runs`
+  - inspect recent saved scrape runs and metadata
+- `get_metric_timeseries`
+  - return historical metric rows for a metric/advertiser/country
+- `compare_advertisers`
+  - compare latest values across advertisers
+
+## Data Structures
+
+### Shared Operational Tables
+
+These tables are cross-platform and should stay generic:
+
+- `advertisers`
+- `scrape_runs`
+- `scrape_run_metrics`
+- `requested_advertisers`
+
+### SensorTower Tables
+
+SensorTower data uses provider-prefixed table names:
+
+- `sensortower_downloads`
+  - downloads and revenue by date, country, OS, granularity
+- `sensortower_usage`
+  - DAU, time spent, sessions per day
+- `sensortower_retention`
+  - cohort retention values such as `d1`, `d7`, `d30`, `d60`
+- `sensortower_impression_share`
+  - share of voice by ad network
+- `sensortower_demographics`
+  - age bracket and gender split
+- `sensortower_rankings`
+  - app chart rankings by category and chart type
+- `sensortower_reviews`
+  - daily average rating and star-count breakdown
+- `sensortower_review_texts`
+  - individual review text, sentiment, tags, version
+- `sensortower_creatives`
+  - creative metadata such as creative type, network, thumbnail, duration, first seen
+- `sensortower_aso_keywords`
+  - keyword rank plus traffic and opportunity scores
+
+### Naming Convention
+
+Use this naming convention going forward:
+
+- shared workflow tables stay generic
+- platform/provider data tables use provider prefixes
+
+Examples:
+
+- `sensortower_downloads`
+- `adclarity_creatives`
+- `otterlyai_visibility`
+
+This is the recommended structure if you plan to add more providers later.
+
+### SensorTower Identifier Overrides
+
+Most advertisers only need one global App Store ID and one global Android
+package:
+
+```yaml
+platforms:
+  sensortower:
+    unified_app_id: "..."
+    publisher_id: "..."
+    ios_app_id: "..."
+    android_package: "..."
+```
+
+Some apps reuse the same `unified_app_id` but have country-specific store IDs.
+For those cases, keep the global default and add overrides only where needed:
+
+```yaml
+platforms:
+  sensortower:
+    unified_app_id: "..."
+    ios_app_id: "global-default-ios-id"
+    ios_app_ids_by_country:
+      TR: "country-specific-ios-id"
+    android_package: "global.default.package"
+    android_packages_by_country:
+      BR: "country.specific.package"
+```
+
+AdIntel will use the country-specific override when present and automatically
+fall back to the global `ios_app_id` / `android_package` for every other
+country.
 
 ## Setup
 
@@ -62,169 +165,157 @@ pip install -e ".[dev,mcp]"
 playwright install chromium
 ```
 
-Copy the example environment file and fill in your Neon credentials:
+Create your env file:
 
 ```bash
 cp .env.example .env
-# Edit .env and set ADINTEL_DATABASE_URL to your Neon pooler URL
 ```
 
-Apply the schema and load your advertiser catalog:
+Set at least:
 
-```bash
-adintel init-db
-adintel catalog validate
-adintel advertisers sync-catalog
+- `ADINTEL_DATABASE_URL`
+
+For Neon, use the SQLAlchemy-style URL:
+
+```text
+postgresql+psycopg://USER:PASSWORD@HOST/DATABASE?sslmode=require
 ```
 
----
+## Database Workflow
 
-## Collecting Data
+### Canonical Schema
 
-**1. Log in to SensorTower** (one-time, saves a browser session locally):
+The source of truth is:
 
-```bash
-adintel login sensortower
-# A browser window opens — complete the login, then press Enter.
-# Session is saved to state/browser/ and reused on future runs.
-```
+- [schema.sql](/Users/yongcheng/Desktop/projects/AdIntel/sql/schema.sql)
 
-**2. Collect a single advertiser** (writes to Neon):
+### Migration Files
 
-```bash
-adintel collect advertiser Chime --platform sensortower --verbose
-```
+Use `sql/migrations/` for structural or destructive changes such as:
 
-**3. Collect all stale advertisers** (writes to Neon):
+- renaming tables
+- renaming constraints
+- data backfills
+- one-time cleanup steps
 
-```bash
-adintel collect stale --platform sensortower --verbose
-```
+Current migration example:
 
-**4. One-command batch run** (schema + catalog sync + collection → Neon):
+- [20260405_rename_st_tables_to_sensortower.sql](/Users/yongcheng/Desktop/projects/AdIntel/sql/migrations/20260405_rename_st_tables_to_sensortower.sql)
+
+### Apply Schema And Migrations
 
 ```bash
-# Set your database URLs first (or export them in your shell profile):
 export SERVER_DATABASE_URL='postgresql://user:pass@host/db?sslmode=require'
-export ADINTEL_DATABASE_URL='postgresql+psycopg://user:pass@pooler-host/db?sslmode=require'
-
-bash scripts/run_local_to_server.sh
+bash scripts/migrate_server_db.sh
 ```
 
-**Run all advertisers from config:**
+The migration script:
+
+1. applies `sql/schema.sql`
+2. applies each SQL file in `sql/migrations/` once
+3. records applied files in `adintel_migration_state`
+
+### Testing Reset
+
+If this is a testing database and you want a clean reset:
+
 ```bash
-RUN_ALL_FROM_CONFIG=true bash scripts/run_local_to_server.sh
+psql "$SERVER_DATABASE_URL" -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
+bash scripts/migrate_server_db.sh
+./.venv/bin/adintel advertisers sync-catalog
 ```
 
-**Run a specific advertiser:**
+## Advertiser Workflow
+
+### Sync Advertiser Catalog
+
 ```bash
-ADVERTISER_NAME=Chime bash scripts/run_local_to_server.sh
+./.venv/bin/adintel advertisers sync-catalog
 ```
 
-**Dry-run (shows commands without executing):**
+### List Advertisers
+
 ```bash
-DRY_RUN=true bash scripts/run_local_to_server.sh
+./.venv/bin/adintel advertisers list
 ```
 
-**Use an existing browser via CDP:**
-```bash
-USE_CDP=true bash scripts/run_local_to_server.sh
-```
-
----
-
-## Managing Advertisers
+### Upsert One Advertiser
 
 ```bash
-# List all advertisers in the database
-adintel advertisers list
-
-# Sync config/advertisers.yaml → database
-adintel advertisers sync-catalog
-
-# Add or update one advertiser manually
-adintel advertisers upsert --name Chime --category Finance --domain chime.com \
+./.venv/bin/adintel advertisers upsert \
+  --name Chime \
+  --category Finance \
+  --domain chime.com \
   --sensortower-unified-app-id <uai>
-
-# Batch-onboard from a YAML file (searches SensorTower for app IDs)
-adintel advertisers onboard-batch --input config/onboarding.example.yaml
 ```
 
----
-
-## MCP Server
-
-AdIntel supports two MCP connection styles:
-
-- local `stdio` if you want the MCP server to run on your machine
-- remote HTTP if you want an always-on MCP endpoint on Vercel
-
-Use local `stdio` when you are developing locally or want full control over the environment.
-Use remote HTTP when you want Claude, Codex, or Antigravity to connect to the same shared Neon-backed data without starting a local process first.
-
-### Current Hosted Endpoint
-
-The current Vercel deployment serves the MCP endpoint at:
-
-- `https://adintel-delta.vercel.app/`
-
-### Before You Install Any Client
-
-Make sure the backend is reachable first:
-
-1. Open `https://adintel-delta.vercel.app/`
-2. Confirm it does not return a Vercel `404` or auth wall
-
-If the root URL is not reachable, fix the Vercel deployment first. Client setup will not work until that endpoint is live.
-
-### Local MCP Server
-
-Start the MCP server locally. It will read from whichever database `ADINTEL_DATABASE_URL` points to.
+### Batch Onboard Advertisers
 
 ```bash
-adintel mcp
-# or
-adintel-mcp
+./.venv/bin/adintel advertisers onboard-batch --input config/onboarding.example.yaml
 ```
-
-This is the right choice if:
-
-- you want to run everything on your machine
-- you want to connect a desktop client to a local process
-- you want to point the MCP server at a local database or a custom database URL
-
-### Hosted MCP Server On Vercel
-
-The Vercel deployment serves the same MCP tools over HTTP. Collection still runs locally and writes to Neon. Vercel only reads from Neon.
-
-Deploy flow:
-
-1. Push this repo to GitHub
-2. Import the repo in [vercel.com](https://vercel.com)
-3. Add Vercel environment variables:
-   - `ADINTEL_DATABASE_URL`
-     Set this to your Neon pooled SQLAlchemy URL, for example `postgresql+psycopg://...`
-   - `ADINTEL_AUTO_APPLY_SCHEMA`
-     Set this to `false`
-4. Deploy
-5. Verify:
-   - `https://adintel-delta.vercel.app/`
 
 Important:
 
-- Vercel is read-only for this project
-- browser automation and Playwright collection still run on your machine
-- the hosted MCP server is for querying Neon-backed data, not scraping SensorTower
+- batch onboarding can still produce ambiguous or bad matches
+- review results before treating them as trusted
 
-### Install In Claude Desktop
+## Collection Workflow
 
-Claude Desktop usually works best with the `mcp-remote` bridge for remote HTTP MCP servers.
+### Login To SensorTower
+
+```bash
+./.venv/bin/adintel login sensortower
+```
+
+This saves local browser state under `state/browser/`.
+
+### Collect One Advertiser
+
+```bash
+./.venv/bin/adintel collect advertiser Chime --platform sensortower --verbose
+```
+
+### Collect Stale Advertisers
+
+```bash
+./.venv/bin/adintel collect stale --platform sensortower --verbose
+```
+
+### One-Command Local To Neon Run
+
+```bash
+bash scripts/run_local_to_server.sh
+```
+
+Useful variants:
+
+```bash
+RUN_ALL_FROM_CONFIG=true bash scripts/run_local_to_server.sh
+ADVERTISER_NAME=Chime bash scripts/run_local_to_server.sh
+USE_CDP=true bash scripts/run_local_to_server.sh
+DRY_RUN=true bash scripts/run_local_to_server.sh
+```
+
+## Hosted MCP
+
+Current hosted endpoint:
+
+- `https://adintel-delta.vercel.app/`
+
+This endpoint is a real MCP HTTP transport endpoint.
+
+A plain browser or `curl` may return a `406 Not Acceptable` response because the server expects a client that accepts `text/event-stream`. That is normal.
+
+## Install The MCP
+
+### Claude Desktop
 
 Config file on macOS:
 
-`~/Library/Application Support/Claude/claude_desktop_config.json`
+- `~/Library/Application Support/Claude/claude_desktop_config.json`
 
-Add:
+Recommended config:
 
 ```json
 {
@@ -243,87 +334,26 @@ Add:
 }
 ```
 
-Requirements:
+Then fully restart Claude Desktop.
 
-- Node.js installed locally
-- `npx` available in your shell
-
-After saving the file:
-
-1. Fully quit Claude Desktop
-2. Reopen it
-3. Confirm the `adintel` MCP server appears
-
-If you want to use the local MCP server instead of Vercel, use:
-
-```json
-{
-  "mcpServers": {
-    "adintel": {
-      "command": "/Users/yongcheng/Desktop/projects/AdIntel/.venv/bin/adintel-mcp",
-      "env": {
-        "ADINTEL_DATABASE_URL": "postgresql+psycopg://user:pass@pooler-host/db?sslmode=require"
-      }
-    }
-  }
-}
-```
-
-### Install In Claude Code
-
-Claude Code supports remote HTTP MCP directly.
-
-Add the hosted MCP server:
+### Claude Code
 
 ```bash
 claude mcp add --transport http adintel https://adintel-delta.vercel.app/
 ```
 
-Verify it is registered:
+### Codex
 
-```bash
-claude mcp list
-```
+Config file:
 
-If you want to use the local stdio server instead, start `adintel mcp` locally and configure Claude Code to use that local command-based server instead of the hosted URL.
-
-### Install In Codex
-
-Codex uses `~/.codex/config.toml`.
-
-Remote hosted MCP:
+- `~/.codex/config.toml`
 
 ```toml
 [mcp_servers.adintel]
 url = "https://adintel-delta.vercel.app/"
 ```
 
-Local stdio MCP:
-
-```toml
-[mcp_servers.adintel]
-command = "/Users/yongcheng/Desktop/projects/AdIntel/.venv/bin/adintel-mcp"
-
-[mcp_servers.adintel.env]
-ADINTEL_DATABASE_URL = "postgresql+psycopg://user:pass@pooler-host/db?sslmode=require"
-```
-
-After editing the file, restart Codex.
-
-### Install In Antigravity
-
-Open AntiGravity and configure the MCP server from the MCP settings panel:
-
-1. Open the agent panel
-2. Click `...`
-3. Open `MCP Servers`
-4. Choose `Manage MCP Servers`
-5. Open the raw config file
-
-Typical config file path:
-
-- macOS/Linux: `~/.gemini/antigravity/mcp_config.json`
-- Windows: `C:\\Users\\<USERNAME>\\.gemini\\antigravity\\mcp_config.json`
+### Antigravity
 
 Native HTTP config:
 
@@ -337,7 +367,7 @@ Native HTTP config:
 }
 ```
 
-If native HTTP is unreliable, use `mcp-remote` instead:
+Or use `mcp-remote` if needed:
 
 ```json
 {
@@ -354,9 +384,9 @@ If native HTTP is unreliable, use `mcp-remote` instead:
 }
 ```
 
-### What You Can Ask The MCP
+## Example Questions
 
-Once connected, try questions like:
+Ask the MCP things like:
 
 - `List all advertisers in the database.`
 - `Show the most recent collection runs.`
@@ -365,54 +395,28 @@ Once connected, try questions like:
 - `Show collection health for the last 7 days.`
 - `What SensorTower metrics do we have for Coinbase?`
 - `Compare recent scrape status for Chime and Binance.`
-- `Which advertisers were collected successfully today?`
-- `Show me the latest scrape run metadata for Travel Town.`
 
-### Troubleshooting
+## Project Layout
 
-- `The URL returns 404 in the browser`
-  `https://adintel-delta.vercel.app/` is an MCP endpoint, not a normal web page. The important thing is that it should not return a Vercel `404` or authentication wall.
+```text
+src/adintel/         application package
+  cli/               CLI commands
+  collectors/        collection orchestration
+  platforms/         SensorTower logic and parsers
+  db/                SQLAlchemy models and repositories
+  mcp/               MCP tool layer
+  core/              settings and shared models
 
-- `Claude Desktop does not show the MCP server`
-  Confirm your JSON is valid, then fully quit and reopen Claude Desktop.
-
-- `mcp-remote command not found`
-  Install Node.js so `npx` is available.
-
-- `The server appears but tools do not work`
-  Check the Vercel deployment logs and confirm `ADINTEL_DATABASE_URL` is set correctly.
-
-- `Collection is not happening on Vercel`
-  That is expected. Vercel only serves the read-only MCP layer. Run collection locally with `adintel collect ...` or `bash scripts/run_local_to_server.sh`.
-
----
-
-## Schema Changes
-
-`sql/schema.sql` is the canonical schema. It is idempotent (`CREATE TABLE IF NOT EXISTS`, `ADD COLUMN IF NOT EXISTS`) and safe to re-apply.
-
-**Apply to Neon manually:**
-
-```bash
-export SERVER_DATABASE_URL='postgresql://user:pass@host/db?sslmode=require'
-bash scripts/migrate_server_db.sh
+config/              advertiser YAML catalogs
+sql/schema.sql       canonical schema
+sql/migrations/      one-time SQL migrations
+scripts/             helper scripts for migration and collection
+api/index.py         Vercel MCP entry point
+tests/               pytest suite
 ```
-
-**When you add a column to an existing table**, also add an `ALTER TABLE … ADD COLUMN IF NOT EXISTS …` statement at the bottom of `sql/schema.sql` so the migration is non-destructive on existing data.
-
----
-
-## Platform Status
-
-| Platform | Status |
-|---|---|
-| SensorTower | ✅ Active — downloads, usage, retention, impression share, demographics, rankings, reviews, creatives, ASO keywords |
-| AdClarity | ⏳ Deferred — login works, data extraction pending account access |
-
----
 
 ## Tests
 
 ```bash
-.venv/bin/pytest tests/ -v
+./.venv/bin/pytest tests/ -v
 ```

@@ -1,11 +1,14 @@
 advertisers:
-  - name: Albert
+  - name: Candy Crush
     countries:
       - US
-  - name: MoneyLion
+  - name: Pokémon GO
     countries:
       - US
-  - name: Kraken
+  - name: Royal Match
+    countries:
+      - US  
+  - name: Travel Town
     countries:
       - US
   - name: Coinbase
@@ -14,15 +17,12 @@ advertisers:
   - name: eToro
     countries:
       - US
-  - name: Royal Match
+  - name: Albert
     countries:
       - US
-  - name: Travel Town
+  - name: MoneyLion
     countries:
       - US
-  - name: Candy Crush
-    countries:
-      - US
-  - name: Pokemon GO
+  - name: Kraken
     countries:
       - US

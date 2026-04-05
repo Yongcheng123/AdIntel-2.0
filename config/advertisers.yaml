@@ -28,6 +28,8 @@ advertisers:
       unified_app_id: 59f26235179f4f62e549db39
       publisher_id: 59f26235179f4f62e549db38
       ios_app_id: '1436799971'
+      ios_app_ids_by_country:
+        TR: '1663707109'
       android_package: com.binance.dev
 - name: Albert
   category: Games

@@ -61,7 +61,7 @@ CREATE TABLE IF NOT EXISTS requested_advertisers (
   created_at TIMESTAMPTZ DEFAULT now()
 );
 
-CREATE TABLE IF NOT EXISTS st_downloads (
+CREATE TABLE IF NOT EXISTS sensortower_downloads (
   id SERIAL PRIMARY KEY,
   advertiser_name VARCHAR(255) NOT NULL,
   period_date DATE NOT NULL,
@@ -71,12 +71,12 @@ CREATE TABLE IF NOT EXISTS st_downloads (
   downloads INTEGER,
   revenue NUMERIC,
   scraped_at TIMESTAMPTZ DEFAULT now(),
-  CONSTRAINT uq_st_downloads UNIQUE (advertiser_name, period_date, granularity, country, os)
+  CONSTRAINT uq_sensortower_downloads UNIQUE (advertiser_name, period_date, granularity, country, os)
 );
 
-CREATE INDEX IF NOT EXISTS idx_st_downloads_advertiser_name ON st_downloads(advertiser_name);
+CREATE INDEX IF NOT EXISTS idx_sensortower_downloads_advertiser_name ON sensortower_downloads(advertiser_name);
 
-CREATE TABLE IF NOT EXISTS st_usage (
+CREATE TABLE IF NOT EXISTS sensortower_usage (
   id SERIAL PRIMARY KEY,
   advertiser_name VARCHAR(255) NOT NULL,
   period_date DATE NOT NULL,
@@ -85,12 +85,12 @@ CREATE TABLE IF NOT EXISTS st_usage (
   time_spent_min DOUBLE PRECISION,
   sessions_per_day DOUBLE PRECISION,
   scraped_at TIMESTAMPTZ DEFAULT now(),
-  CONSTRAINT uq_st_usage UNIQUE (advertiser_name, period_date, country)
+  CONSTRAINT uq_sensortower_usage UNIQUE (advertiser_name, period_date, country)
 );
 
-CREATE INDEX IF NOT EXISTS idx_st_usage_advertiser_name ON st_usage(advertiser_name);
+CREATE INDEX IF NOT EXISTS idx_sensortower_usage_advertiser_name ON sensortower_usage(advertiser_name);
 
-CREATE TABLE IF NOT EXISTS st_retention (
+CREATE TABLE IF NOT EXISTS sensortower_retention (
   id SERIAL PRIMARY KEY,
   advertiser_name VARCHAR(255) NOT NULL,
   cohort_date DATE NOT NULL,
@@ -102,12 +102,12 @@ CREATE TABLE IF NOT EXISTS st_retention (
   d30 DOUBLE PRECISION,
   d60 DOUBLE PRECISION,
   scraped_at TIMESTAMPTZ DEFAULT now(),
-  CONSTRAINT uq_st_retention UNIQUE (advertiser_name, cohort_date, country)
+  CONSTRAINT uq_sensortower_retention UNIQUE (advertiser_name, cohort_date, country)
 );
 
-CREATE INDEX IF NOT EXISTS idx_st_retention_advertiser_name ON st_retention(advertiser_name);
+CREATE INDEX IF NOT EXISTS idx_sensortower_retention_advertiser_name ON sensortower_retention(advertiser_name);
 
-CREATE TABLE IF NOT EXISTS st_impression_share (
+CREATE TABLE IF NOT EXISTS sensortower_impression_share (
   id SERIAL PRIMARY KEY,
   advertiser_name VARCHAR(255) NOT NULL,
   period_date DATE NOT NULL,
@@ -115,12 +115,12 @@ CREATE TABLE IF NOT EXISTS st_impression_share (
   country VARCHAR(8) NOT NULL DEFAULT 'US',
   sov_pct DOUBLE PRECISION,
   scraped_at TIMESTAMPTZ DEFAULT now(),
-  CONSTRAINT uq_st_impression_share UNIQUE (advertiser_name, period_date, network, country)
+  CONSTRAINT uq_sensortower_impression_share UNIQUE (advertiser_name, period_date, network, country)
 );
 
-CREATE INDEX IF NOT EXISTS idx_st_impression_share_advertiser_name ON st_impression_share(advertiser_name);
+CREATE INDEX IF NOT EXISTS idx_sensortower_impression_share_advertiser_name ON sensortower_impression_share(advertiser_name);
 
-CREATE TABLE IF NOT EXISTS st_demographics (
+CREATE TABLE IF NOT EXISTS sensortower_demographics (
   id SERIAL PRIMARY KEY,
   advertiser_name VARCHAR(255) NOT NULL,
   country VARCHAR(8) NOT NULL DEFAULT 'US',
@@ -128,12 +128,12 @@ CREATE TABLE IF NOT EXISTS st_demographics (
   male_pct DOUBLE PRECISION,
   female_pct DOUBLE PRECISION,
   scraped_at TIMESTAMPTZ DEFAULT now(),
-  CONSTRAINT uq_st_demographics UNIQUE (advertiser_name, country, age_bracket)
+  CONSTRAINT uq_sensortower_demographics UNIQUE (advertiser_name, country, age_bracket)
 );
 
-CREATE INDEX IF NOT EXISTS idx_st_demographics_advertiser_name ON st_demographics(advertiser_name);
+CREATE INDEX IF NOT EXISTS idx_sensortower_demographics_advertiser_name ON sensortower_demographics(advertiser_name);
 
-CREATE TABLE IF NOT EXISTS st_rankings (
+CREATE TABLE IF NOT EXISTS sensortower_rankings (
   id SERIAL PRIMARY KEY,
   advertiser_name VARCHAR(255) NOT NULL,
   rank_date DATE NOT NULL,
@@ -143,12 +143,12 @@ CREATE TABLE IF NOT EXISTS st_rankings (
   rank INTEGER,
   is_featured BOOLEAN NOT NULL DEFAULT FALSE,
   scraped_at TIMESTAMPTZ DEFAULT now(),
-  CONSTRAINT uq_st_rankings UNIQUE (advertiser_name, rank_date, country, category, chart_type)
+  CONSTRAINT uq_sensortower_rankings UNIQUE (advertiser_name, rank_date, country, category, chart_type)
 );
 
-CREATE INDEX IF NOT EXISTS idx_st_rankings_advertiser_name ON st_rankings(advertiser_name);
+CREATE INDEX IF NOT EXISTS idx_sensortower_rankings_advertiser_name ON sensortower_rankings(advertiser_name);
 
-CREATE TABLE IF NOT EXISTS st_reviews (
+CREATE TABLE IF NOT EXISTS sensortower_reviews (
   id SERIAL PRIMARY KEY,
   advertiser_name VARCHAR(255) NOT NULL,
   period_date DATE NOT NULL,
@@ -161,12 +161,12 @@ CREATE TABLE IF NOT EXISTS st_reviews (
   star_4_count INTEGER,
   star_5_count INTEGER,
   scraped_at TIMESTAMPTZ DEFAULT now(),
-  CONSTRAINT uq_st_reviews UNIQUE (advertiser_name, period_date, country)
+  CONSTRAINT uq_sensortower_reviews UNIQUE (advertiser_name, period_date, country)
 );
 
-CREATE INDEX IF NOT EXISTS idx_st_reviews_advertiser_name ON st_reviews(advertiser_name);
+CREATE INDEX IF NOT EXISTS idx_sensortower_reviews_advertiser_name ON sensortower_reviews(advertiser_name);
 
-CREATE TABLE IF NOT EXISTS st_review_texts (
+CREATE TABLE IF NOT EXISTS sensortower_review_texts (
   id SERIAL PRIMARY KEY,
   advertiser_name VARCHAR(255) NOT NULL,
   review_id BIGINT NOT NULL,
@@ -181,12 +181,12 @@ CREATE TABLE IF NOT EXISTS st_review_texts (
   app_version VARCHAR(128),
   os VARCHAR(16) NOT NULL DEFAULT 'ios',
   scraped_at TIMESTAMPTZ DEFAULT now(),
-  CONSTRAINT uq_st_review_texts UNIQUE (advertiser_name, review_id)
+  CONSTRAINT uq_sensortower_review_texts UNIQUE (advertiser_name, review_id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_st_review_texts_advertiser_name ON st_review_texts(advertiser_name);
+CREATE INDEX IF NOT EXISTS idx_sensortower_review_texts_advertiser_name ON sensortower_review_texts(advertiser_name);
 
-CREATE TABLE IF NOT EXISTS st_creatives (
+CREATE TABLE IF NOT EXISTS sensortower_creatives (
   id SERIAL PRIMARY KEY,
   advertiser_name VARCHAR(255) NOT NULL,
   creative_id VARCHAR(255) NOT NULL,
@@ -196,12 +196,12 @@ CREATE TABLE IF NOT EXISTS st_creatives (
   duration_bucket VARCHAR(32),
   first_seen DATE,
   scraped_at TIMESTAMPTZ DEFAULT now(),
-  CONSTRAINT uq_st_creatives UNIQUE (advertiser_name, creative_id)
+  CONSTRAINT uq_sensortower_creatives UNIQUE (advertiser_name, creative_id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_st_creatives_advertiser_name ON st_creatives(advertiser_name);
+CREATE INDEX IF NOT EXISTS idx_sensortower_creatives_advertiser_name ON sensortower_creatives(advertiser_name);
 
-CREATE TABLE IF NOT EXISTS st_aso_keywords (
+CREATE TABLE IF NOT EXISTS sensortower_aso_keywords (
   id SERIAL PRIMARY KEY,
   advertiser_name VARCHAR(255) NOT NULL,
   keyword VARCHAR(255) NOT NULL,
@@ -212,10 +212,10 @@ CREATE TABLE IF NOT EXISTS st_aso_keywords (
   country VARCHAR(8) NOT NULL DEFAULT 'US',
   device VARCHAR(32) NOT NULL DEFAULT 'iphone',
   scraped_at TIMESTAMPTZ DEFAULT now(),
-  CONSTRAINT uq_st_aso_keywords UNIQUE (advertiser_name, keyword, country, device)
+  CONSTRAINT uq_sensortower_aso_keywords UNIQUE (advertiser_name, keyword, country, device)
 );
 
-CREATE INDEX IF NOT EXISTS idx_st_aso_keywords_advertiser_name ON st_aso_keywords(advertiser_name);
+CREATE INDEX IF NOT EXISTS idx_sensortower_aso_keywords_advertiser_name ON sensortower_aso_keywords(advertiser_name);
 
 -- Additive migrations for existing databases
 --

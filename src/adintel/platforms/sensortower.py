@@ -125,6 +125,15 @@ class SensorTowerCollector(PlatformCollector):
             ]
 
             for country in request.countries:
+                profile = request.advertiser.platforms.sensortower
+                logger.info(
+                    "Collecting %s/%s with SensorTower ids: uai=%s ios_app_id=%s android_package=%s",
+                    request.advertiser.name,
+                    country,
+                    profile.unified_app_id,
+                    profile.resolve_ios_app_id(country),
+                    profile.resolve_android_package(country),
+                )
                 logger.info("Collecting metrics for %s/%s", request.advertiser.name, country)
                 for metric_name, collector_fn in metrics:
                     key = f"{metric_name}/{country}"
@@ -234,10 +243,12 @@ class SensorTowerCollector(PlatformCollector):
 
     def _common_params(self, request: CollectorRunRequest, country: str) -> dict:
         profile = request.advertiser.platforms.sensortower
+        ios_app_id = profile.resolve_ios_app_id(country)
+        android_package = profile.resolve_android_package(country)
         return {
             "uai": profile.unified_app_id,
-            "sia": profile.ios_app_id,
-            "saa": profile.android_package,
+            "sia": ios_app_id,
+            "saa": android_package,
             "country": country,
             "breakdown_attribute": "appId",
             "chart_plotting_type": "line",
@@ -249,12 +260,14 @@ class SensorTowerCollector(PlatformCollector):
 
     def _store_marketing_params(self, request: CollectorRunRequest, country: str, *, os: str = "unified") -> dict:
         profile = request.advertiser.platforms.sensortower
+        ios_app_id = profile.resolve_ios_app_id(country)
+        android_package = profile.resolve_android_package(country)
         return {
             "uai": profile.unified_app_id,
-            "ssia": profile.ios_app_id,
-            "ssaa": profile.android_package,
-            "sia": profile.ios_app_id,
-            "saa": profile.android_package,
+            "ssia": ios_app_id,
+            "ssaa": android_package,
+            "sia": ios_app_id,
+            "saa": android_package,
             "os": os,
             "country": country,
         }
@@ -406,8 +419,8 @@ class SensorTowerCollector(PlatformCollector):
             for value in [
                 request.advertiser.platforms.sensortower.unified_app_id,
                 request.advertiser.platforms.sensortower.publisher_id,
-                request.advertiser.platforms.sensortower.ios_app_id,
-                request.advertiser.platforms.sensortower.android_package,
+                request.advertiser.platforms.sensortower.resolve_ios_app_id(request.countries[0]),
+                request.advertiser.platforms.sensortower.resolve_android_package(request.countries[0]),
             ]
             if value
         }
@@ -551,12 +564,14 @@ class SensorTowerCollector(PlatformCollector):
         category_state: dict[str, str | None],
     ) -> int:
         profile = request.advertiser.platforms.sensortower
+        ios_app_id = profile.resolve_ios_app_id(country)
+        android_package = profile.resolve_android_package(country)
         url = self._build_url(
             "/usage-intel/demographics",
             {
                 "uai": profile.unified_app_id,
-                "sia": profile.ios_app_id,
-                "saa": profile.android_package,
+                "sia": ios_app_id,
+                "saa": android_package,
                 "os": "unified",
                 "country": country,
             },
@@ -586,12 +601,15 @@ class SensorTowerCollector(PlatformCollector):
         rows_by_key: dict[tuple[str, date, str], dict] = {}
 
         for measure in ["timeSpent", "sessionCount"]:
+            profile = request.advertiser.platforms.sensortower
+            ios_app_id = profile.resolve_ios_app_id(country)
+            android_package = profile.resolve_android_package(country)
             url = self._build_url(
                 "/usage-intel/active-users",
                 {
-                    "uai": request.advertiser.platforms.sensortower.unified_app_id,
-                    "sia": request.advertiser.platforms.sensortower.ios_app_id,
-                    "saa": request.advertiser.platforms.sensortower.android_package,
+                    "uai": profile.unified_app_id,
+                    "sia": ios_app_id,
+                    "saa": android_package,
                     "os": "unified",
                     "country": country,
                     "start_date": date_start.isoformat(),
@@ -638,8 +656,8 @@ class SensorTowerCollector(PlatformCollector):
             "/ad-intel/advertisers/top-apps",
             {
                 "uai": request.advertiser.platforms.sensortower.unified_app_id,
-                "sia": request.advertiser.platforms.sensortower.ios_app_id,
-                "saa": request.advertiser.platforms.sensortower.android_package,
+                "sia": request.advertiser.platforms.sensortower.resolve_ios_app_id(country),
+                "saa": request.advertiser.platforms.sensortower.resolve_android_package(country),
                 "os": "unified",
                 "country": country,
                 "category": category_id,
@@ -723,8 +741,8 @@ class SensorTowerCollector(PlatformCollector):
             "/app-analysis/creative-gallery",
             {
                 "uai": request.advertiser.platforms.sensortower.unified_app_id,
-                "sia": request.advertiser.platforms.sensortower.ios_app_id,
-                "saa": request.advertiser.platforms.sensortower.android_package,
+                "sia": request.advertiser.platforms.sensortower.resolve_ios_app_id(country),
+                "saa": request.advertiser.platforms.sensortower.resolve_android_package(country),
                 "os": "unified",
                 "country": country,
                 "start_date": date_start.isoformat(),

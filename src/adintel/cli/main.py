@@ -8,7 +8,7 @@ from pathlib import Path
 import typer
 
 from adintel.collectors.service import CollectorService
-from adintel.core.catalog import load_catalog
+from adintel.core.catalog import get_catalog_advertiser, load_catalog
 from adintel.core.models import AdvertiserProfile, PlatformName
 from adintel.core.settings import get_settings
 from adintel.db.repositories import AdvertiserRepository, CollectionHealthRepository
@@ -219,15 +219,17 @@ def collect_advertiser(
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable verbose logging (DEBUG level)."),
 ) -> None:
     _setup_logging(verbose)
+    settings = get_settings()
+    catalog = load_catalog(settings.config_file)
     with _session_factory()() as session:
         advertisers = AdvertiserRepository(session)
-        advertiser = advertisers.get(advertiser_name)
+        advertiser = get_catalog_advertiser(catalog, advertiser_name) or advertisers.get(advertiser_name)
         if advertiser is None:
             raise typer.BadParameter(
                 f'Advertiser "{advertiser_name}" is not in the database. Run "adintel advertisers sync-catalog" or "adintel advertisers upsert".'
             )
 
-        service = CollectorService(get_settings(), session)
+        service = CollectorService(settings, session)
         results = asyncio.run(
             service.collect_many(
                 advertiser,
@@ -255,6 +257,7 @@ def collect_stale(
     """Collect data for all advertisers whose data is stale or has never been collected."""
     _setup_logging(verbose)
     settings = get_settings()
+    catalog = load_catalog(settings.config_file)
     with _session_factory()() as session:
         health_repo = CollectionHealthRepository(session)
         stale_names = health_repo.get_stale_advertisers(platform, stale_hours=stale_hours)
@@ -269,7 +272,7 @@ def collect_stale(
 
         async def _run_stale() -> None:
             for name in stale_names:
-                advertiser = advertisers_repo.get(name)
+                advertiser = get_catalog_advertiser(catalog, name) or advertisers_repo.get(name)
                 if advertiser is None:
                     typer.echo(f"  {name}: skipped (not in database)")
                     continue
