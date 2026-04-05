@@ -233,6 +233,42 @@ bash scripts/migrate_server_db.sh
 ./.venv/bin/adintel advertisers sync-catalog
 ```
 
+Why this matters:
+
+- runtime collection reads advertiser identifiers from the `advertisers` table in the database
+- if IDs in DB are stale or wrong, collection can run but return `empty`/`partial`
+- syncing copies current identifiers from `config/advertisers.yaml` into DB before collection
+
+`scripts/run_local_to_server.sh` runs this sync step by default (`SYNC_CATALOG=true`) for that reason.
+
+If you prefer DB-first operations, you can disable sync and manage IDs directly in DB:
+
+```bash
+SYNC_CATALOG=false bash scripts/run_local_to_server.sh
+```
+
+### Validate Catalog Vs DB
+
+Use this check to catch drift before collection:
+
+```bash
+bash scripts/validate_catalog_vs_db.sh
+```
+
+The script fails non-zero when it finds:
+
+- duplicate advertiser names after normalization
+- advertisers missing in DB
+- extra advertisers in DB not present in catalog
+- field mismatches for category, countries, and SensorTower IDs
+
+`scripts/run_local_to_server.sh` runs this validation by default (`VALIDATE_CATALOG_DB=true`).
+Disable only if you intentionally allow temporary drift:
+
+```bash
+VALIDATE_CATALOG_DB=false bash scripts/run_local_to_server.sh
+```
+
 ### List Advertisers
 
 ```bash

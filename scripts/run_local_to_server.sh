@@ -25,6 +25,7 @@ HEADLESS="${HEADLESS:-true}"
 DEBUG="${DEBUG:-false}"
 VERBOSE="${VERBOSE:-true}"
 SYNC_CATALOG="${SYNC_CATALOG:-true}"
+VALIDATE_CATALOG_DB="${VALIDATE_CATALOG_DB:-true}"
 RUN_COLLECTION="${RUN_COLLECTION:-true}"
 
 export SERVER_DATABASE_URL
@@ -33,14 +34,33 @@ export ADINTEL_AUTO_APPLY_SCHEMA=false
 
 cd "${ROOT_DIR}"
 
+# Prevent concurrent runs from sharing the same browser profile state.
+RUN_LOCK_DIR="${ROOT_DIR}/state/.run_local_to_server.lock"
+mkdir -p "${ROOT_DIR}/state"
+if ! mkdir "${RUN_LOCK_DIR}" 2>/dev/null; then
+  echo "Another collection run appears to be in progress (lock: ${RUN_LOCK_DIR})."
+  echo "Wait for the running job to finish, or remove the stale lock directory if no process is active."
+  exit 1
+fi
+trap 'rmdir "${RUN_LOCK_DIR}" 2>/dev/null || true' EXIT
+
 echo "Using server database: ${SERVER_DATABASE_URL}"
 echo "Applying schema..."
 bash "${ROOT_DIR}/scripts/migrate_server_db.sh"
 
 if [[ "${SYNC_CATALOG}" == "true" ]]; then
   echo
+  echo "Catalog sync is enabled (SYNC_CATALOG=true)."
+  echo "This keeps DB runtime identifiers aligned with config/advertisers.yaml before collection."
+  echo "Set SYNC_CATALOG=false only if you intentionally manage advertiser IDs directly in DB."
   echo "Syncing advertiser catalog..."
   ./.venv/bin/adintel advertisers sync-catalog
+fi
+
+if [[ "${VALIDATE_CATALOG_DB}" == "true" ]]; then
+  echo
+  echo "Validating catalog and DB alignment..."
+  bash "${ROOT_DIR}/scripts/validate_catalog_vs_db.sh"
 fi
 
 if [[ "${RUN_COLLECTION}" == "true" ]]; then
@@ -48,7 +68,9 @@ if [[ "${RUN_COLLECTION}" == "true" ]]; then
   echo "Running collection..."
   advertisers=()
   if [[ "${RUN_ALL_FROM_CONFIG}" == "true" ]]; then
-    mapfile -t advertisers < <(
+    while IFS= read -r advertiser; do
+      [[ -n "${advertiser}" ]] && advertisers+=("${advertiser}")
+    done < <(
       ./.venv/bin/python - <<'PY'
 from pathlib import Path
 import yaml
@@ -89,5 +111,5 @@ fi
 
 echo
 echo "Latest scrape runs:"
-psql "${SERVER_DATABASE_URL}" -c \
+psql "${SERVER_DATABASE_URL}" -P pager=off -c \
   "select id, advertiser_name, platform, status, message, metadata from scrape_runs order by id desc limit 5;"

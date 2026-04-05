@@ -22,11 +22,11 @@ EOF
 fi
 
 echo "Applying schema: ${SCHEMA_FILE}"
-psql "${SERVER_DATABASE_URL}" -v ON_ERROR_STOP=1 -f "${SCHEMA_FILE}"
+psql "${SERVER_DATABASE_URL}" -v ON_ERROR_STOP=1 -P pager=off -f "${SCHEMA_FILE}"
 
 echo
 echo "Preparing migration state table..."
-psql "${SERVER_DATABASE_URL}" -v ON_ERROR_STOP=1 <<'SQL'
+psql "${SERVER_DATABASE_URL}" -v ON_ERROR_STOP=1 -P pager=off <<'SQL'
 CREATE TABLE IF NOT EXISTS adintel_migration_state (
   filename TEXT PRIMARY KEY,
   applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -36,18 +36,18 @@ SQL
 if [[ -d "${MIGRATIONS_DIR}" ]]; then
   while IFS= read -r migration_file; do
     migration_name="$(basename "${migration_file}")"
-    already_applied="$(psql "${SERVER_DATABASE_URL}" -Atqc "SELECT 1 FROM adintel_migration_state WHERE filename = '${migration_name}' LIMIT 1")"
+    already_applied="$(psql "${SERVER_DATABASE_URL}" -P pager=off -Atqc "SELECT 1 FROM adintel_migration_state WHERE filename = '${migration_name}' LIMIT 1")"
     if [[ "${already_applied}" == "1" ]]; then
       echo "Skipping already-applied migration: ${migration_name}"
       continue
     fi
 
     echo "Applying migration: ${migration_name}"
-    psql "${SERVER_DATABASE_URL}" -v ON_ERROR_STOP=1 -f "${migration_file}"
-    psql "${SERVER_DATABASE_URL}" -v ON_ERROR_STOP=1 -c "INSERT INTO adintel_migration_state (filename) VALUES ('${migration_name}')"
+    psql "${SERVER_DATABASE_URL}" -v ON_ERROR_STOP=1 -P pager=off -f "${migration_file}"
+    psql "${SERVER_DATABASE_URL}" -v ON_ERROR_STOP=1 -P pager=off -c "INSERT INTO adintel_migration_state (filename) VALUES ('${migration_name}')"
   done < <(find "${MIGRATIONS_DIR}" -maxdepth 1 -type f -name '*.sql' | sort)
 fi
 
 echo
 echo "Verifying scrape_runs table..."
-psql "${SERVER_DATABASE_URL}" -c '\d scrape_runs'
+psql "${SERVER_DATABASE_URL}" -P pager=off -c '\d scrape_runs'

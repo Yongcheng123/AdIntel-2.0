@@ -28,8 +28,6 @@ advertisers:
       unified_app_id: 59f26235179f4f62e549db39
       publisher_id: 59f26235179f4f62e549db38
       ios_app_id: '1436799971'
-      ios_app_ids_by_country:
-        TR: '1663707109'
       android_package: com.binance.dev
 - name: Albert
   category: Games
@@ -42,42 +40,255 @@ advertisers:
       publisher_id: 5628915002ac648b2800328b
       ios_app_id: '412786607'
 - name: Coinbase
+  category: Finance
+  countries:
+  - US
+  platforms:
+    adclarity: {}
+    sensortower:
+      unified_app_id: 55af035d9abaa8151307af24
+      publisher_id: 
+      ios_app_id: '886427730'
+      android_package: com.coinbase.android
+- name: eToro
+  category: Finance
+  countries:
+  - US
+  platforms:
+    adclarity: {}
+    sensortower:
+      unified_app_id: 54e8fff40f122550510026dd
+      publisher_id: 
+      ios_app_id: '674984916'
+      android_package: com.etoro.openbook
+- name: Travel Town
   category: Games
   countries:
   - US
   platforms:
     adclarity: {}
     sensortower:
-      unified_app_id: 567c2ede6ac972405600b3e9
-      publisher_id: 55f8928f8ac350426b033a20
-      ios_app_id: '588530550'
-- name: eToro
-  category: Utilities
-  countries:
-  - US
-  platforms:
-    adclarity: {}
-    sensortower:
-      unified_app_id: 673e0bfab56afc71a0f20fdd
-      publisher_id: 673e0bfab56afc71a0f20fdc
-      ios_app_id: '6738405265'
-- name: Travel Town
-  category: Travel
-  countries:
-  - US
-  platforms:
-    adclarity: {}
-    sensortower:
-      unified_app_id: 6975107b576e2d3f5f3a1eb1
-      publisher_id: 55f891a18ac350426b02f985
-      ios_app_id: '6758063067'
+      unified_app_id: 5f09e992d871ea7bfa1d261b
+      publisher_id: 
+      ios_app_id: '1521236603'
+      android_package: io.randomco.travel
 - name: Pokemon GO
-  category: Utilities
+  category: Games
   countries:
   - US
   platforms:
     adclarity: {}
     sensortower:
-      unified_app_id: 57a5f2640211a6696f00010d
-      publisher_id: 57a5126f0211a6c2a3000029
-      ios_app_id: '1138642849'
+      unified_app_id: 577c9fa40211a6cf30000056
+      publisher_id: 
+      ios_app_id: '1094591345'
+      android_package: com.nianticlabs.pokemongo
+- name: Royal Match
+  category: Games
+  countries:
+  - US
+  platforms:
+    adclarity: {}
+    sensortower:
+      unified_app_id: 5f16a8019f7b275235017614
+      publisher_id: 
+      ios_app_id: '1482155847'
+      android_package: com.dreamgames.royalmatch
+- name: MoneyLion
+  category: Finance
+  countries:
+  - US
+  platforms:
+    adclarity: {}
+    sensortower:
+      unified_app_id: 56aeb27302ac64713d000002
+      publisher_id: 
+      ios_app_id: '1064677082'
+      android_package: com.moneylion
+- name: Kraken
+  category: Finance
+  countries:
+  - US
+  platforms:
+    adclarity: {}
+    sensortower:
+      unified_app_id: 5f7507d3dbcdf6195491db76
+      publisher_id: 
+      ios_app_id: '1481947260'
+      android_package: com.kraken.invest.app
+
+- name: Current
+  category: Finance
+  countries:
+  - US
+  platforms:
+    sensortower:
+      unified_app_id: 5703b61402ac643f4b000061
+      publisher_id:
+      ios_app_id: '1077366211'
+      android_package: com.current.app
+
+- name: Dave
+  category: Finance
+  countries:
+  - US
+  platforms:
+    sensortower:
+      unified_app_id: 58ff690a0211a6a9730005c3
+      publisher_id:
+      ios_app_id: '1193801909'
+      android_package: com.dave
+
+- name: Koho
+  category: Finance
+  countries:
+  - US
+  platforms:
+    sensortower:
+      unified_app_id: 58873af20211a6fd3e00006e
+      publisher_id:
+      ios_app_id: '1091010942'
+      android_package: ca.koho
+
+- name: Mistplay
+  category: Games
+  countries:
+  - US
+  platforms:
+    sensortower:
+      unified_app_id: 578479f10211a6876500007d
+      publisher_id:
+      ios_app_id: '6739352969'
+      android_package: com.mistplay.mistplay
+
+- name: MonopolyGo
+  category: Games
+  countries:
+  - US
+  platforms:
+    sensortower:
+      unified_app_id: 62be6a5fbab10c69c5a0a42a
+      publisher_id:
+      ios_app_id: '1621328561'
+      android_package: com.scopely.monopolygo
+
+- name: Possible Finance
+  category: Finance
+  countries:
+  - US
+  platforms:
+    sensortower:
+      unified_app_id: 5b074b73cab16e72da8cf77d
+      publisher_id:
+      ios_app_id: '1380384597'
+      android_package: com.possible_mobile
+
+- name: Realtor
+  category: Lifestyle, Business
+  countries:
+  - US
+  platforms:
+    sensortower:
+      unified_app_id: 55c515af02ac64f9c000264a
+      publisher_id:
+      ios_app_id: '336698281'
+      android_package: com.move.realtor
+
+- name: ScrabbleGo
+  category: Games
+  countries:
+  - US
+  platforms:
+    sensortower:
+      unified_app_id: 5a39e9681454d22f5a5e75ca
+      publisher_id:
+      ios_app_id: '1215933788'
+      android_package: com.pieyel.scrabble
+
+- name: Shopback
+  category: Shopping, Lifestyle
+  countries:
+  - US
+  platforms:
+    sensortower:
+      unified_app_id: 57469e54bd495109ce00220f
+      publisher_id:
+      ios_app_id: '1086505626'
+      android_package: com.shopback.app
+
+- name: Stash
+  category: Finance, Education
+  countries:
+  - US
+  platforms:
+    sensortower:
+      unified_app_id: 56fddbd82839d9aa34000001
+      publisher_id:
+      ios_app_id: '1017148055'
+      android_package: com.stash.stashinvest
+
+- name: Tilt
+  category: Finance, Productivity
+  countries:
+  - US
+  platforms:
+    sensortower:
+      unified_app_id: 591206890211a6ffc9002173
+      publisher_id:
+      ios_app_id: '1136397354'
+      android_package: finance.empower
+
+- name: Upside
+  category: Travel, Shopping
+  countries:
+  - US
+  platforms:
+    sensortower:
+      unified_app_id: 5717b62602ac64c3a60000fe
+      publisher_id:
+      ios_app_id: '1099997174'
+      android_package: com.upside.consumer.android
+
+# - name: Varo
+#   category: Finance, Shopping
+#   countries:
+#   - US
+#   platforms:
+#     sensortower:
+#       unified_app_id: 594380950211a6039a0002ad
+#       publisher_id:
+#       ios_app_id: '1517676784'
+#       android_package: com.varomoney.bank
+
+# - name: freecash
+#   category: Finance, Entertainment
+#   countries:
+#   - US
+#   platforms:
+#     sensortower:
+#       unified_app_id: 625b7c37117ba052b27c165b
+#       publisher_id:
+#       ios_app_id: '1673567402'
+#       android_package: com.freecash.app2
+
+- name: swagbucks
+  category: Lifestyle, Shopping
+  countries:
+  - US
+  platforms:
+    sensortower:
+      unified_app_id: 55c5540a02ac64f9c00033f8
+      publisher_id:
+      ios_app_id: '640439547'
+      android_package: com.prodege.swagbucksmobile
+
+- name: testerup
+  category: Finance
+  countries:
+  - US
+  platforms:
+    sensortower:
+      unified_app_id: 594dc76b0162376fcb0093c9
+      publisher_id:
+      ios_app_id: '1241984225'
+      android_package: de.empfohlen
