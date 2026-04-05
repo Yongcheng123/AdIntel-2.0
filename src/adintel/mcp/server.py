@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 from datetime import date
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 from sqlalchemy import desc, select
 
 from adintel.core.settings import ROOT_DIR, get_settings
@@ -282,11 +284,22 @@ def _build_summary(advertiser_name: str, country: str | None = None) -> dict:
 
 
 def create_mcp_server() -> FastMCP:
+    # For the public Vercel deployment, serve Streamable HTTP at the function
+    # root and disable localhost-only host validation. Local stdio usage is
+    # unaffected because these HTTP settings are only relevant for HTTP
+    # transports.
+    is_vercel = bool(os.getenv("VERCEL"))
     server = FastMCP(
         name="AdIntel",
         instructions=(
             "AdIntel exposes structured advertiser metadata and SensorTower-derived intelligence "
             "from the shared PostgreSQL database."
+        ),
+        streamable_http_path="/",
+        transport_security=(
+            TransportSecuritySettings(enable_dns_rebinding_protection=False)
+            if is_vercel
+            else None
         ),
     )
 
