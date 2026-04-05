@@ -1,0 +1,7 @@
+advertisers:
+  - name: Albert
+    countries:
+      - US
+  - name: MoneyLion
+    countries:
+      - US

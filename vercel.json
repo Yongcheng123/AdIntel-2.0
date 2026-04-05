@@ -1,0 +1,18 @@
+{
+  "builds": [
+    {
+      "src": "api/index.py",
+      "use": "@vercel/python",
+      "config": {
+        "maxLambdaSize": "50mb",
+        "requirements": "requirements-vercel.txt"
+      }
+    }
+  ],
+  "routes": [
+    { "src": "/(.*)", "dest": "api/index.py" }
+  ],
+  "env": {
+    "ADINTEL_AUTO_APPLY_SCHEMA": "false"
+  }
+}

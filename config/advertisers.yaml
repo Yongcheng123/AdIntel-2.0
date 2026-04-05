@@ -1,0 +1,81 @@
+advertisers:
+- name: Chime
+  domain: chime.com
+  category: Finance
+  countries:
+  - US
+  platforms:
+    adclarity:
+      advertiser_id: '35120415'
+      brand_id: '2470'
+    sensortower:
+      unified_app_id: 55d93e4402ac645ad20fc82a
+      publisher_id: 55f8915b8ac350426b02e967
+      ios_app_id: '836215269'
+      android_package: com.onedebit.chime
+- name: Binance
+  domain: binance.com
+  category: Finance
+  countries:
+  - US
+  - TR
+  - BR
+  - NG
+  platforms:
+    adclarity:
+      advertiser_id: '19535698'
+    sensortower:
+      unified_app_id: 59f26235179f4f62e549db39
+      publisher_id: 59f26235179f4f62e549db38
+      ios_app_id: '1436799971'
+      android_package: com.binance.dev
+- name: Albert
+  category: Games
+  countries:
+  - US
+  platforms:
+    adclarity: {}
+    sensortower:
+      unified_app_id: 55d3a1a302ac64350a000bc2
+      publisher_id: 5628915002ac648b2800328b
+      ios_app_id: '412786607'
+- name: Coinbase
+  category: Games
+  countries:
+  - US
+  platforms:
+    adclarity: {}
+    sensortower:
+      unified_app_id: 567c2ede6ac972405600b3e9
+      publisher_id: 55f8928f8ac350426b033a20
+      ios_app_id: '588530550'
+- name: eToro
+  category: Utilities
+  countries:
+  - US
+  platforms:
+    adclarity: {}
+    sensortower:
+      unified_app_id: 673e0bfab56afc71a0f20fdd
+      publisher_id: 673e0bfab56afc71a0f20fdc
+      ios_app_id: '6738405265'
+- name: Travel Town
+  category: Travel
+  countries:
+  - US
+  platforms:
+    adclarity: {}
+    sensortower:
+      unified_app_id: 6975107b576e2d3f5f3a1eb1
+      publisher_id: 55f891a18ac350426b02f985
+      ios_app_id: '6758063067'
+- name: Pokemon GO
+  category: Utilities
+  countries:
+  - US
+  platforms:
+    adclarity: {}
+    sensortower:
+      unified_app_id: 57a5f2640211a6696f00010d
+      publisher_id: 57a5126f0211a6c2a3000029
+      ios_app_id: '1138642849'

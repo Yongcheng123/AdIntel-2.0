@@ -1,0 +1,1 @@
+"""AdIntel CLI package."""

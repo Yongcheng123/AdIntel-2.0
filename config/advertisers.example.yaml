@@ -1,0 +1,32 @@
+advertisers:
+  - name: Chime
+    domain: chime.com
+    category: Finance
+    countries:
+      - US
+    platforms:
+      sensortower:
+        unified_app_id: "55d93e4402ac645ad20fc82a"
+        publisher_id: "55f8915b8ac350426b02e967"
+        ios_app_id: "836215269"
+        android_package: "com.onedebit.chime"
+      adclarity:
+        advertiser_id: "35120415"
+        brand_id: "2470"
+
+  - name: Binance
+    domain: binance.com
+    category: Finance
+    countries:
+      - US
+      - TR
+      - BR
+      - NG
+    platforms:
+      sensortower:
+        unified_app_id: "59f26235179f4f62e549db39"
+        publisher_id: "59f26235179f4f62e549db38"
+        ios_app_id: "1436799971"
+        android_package: "com.binance.dev"
+      adclarity:
+        advertiser_id: "19535698"

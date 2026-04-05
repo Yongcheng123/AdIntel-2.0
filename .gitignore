@@ -1,0 +1,25 @@
+# Personal notes (symlink to Obsidian vault)
+Notes
+
+# macOS
+.DS_Store
+
+# Dependencies
+node_modules/
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+*.pyc
+
+# Environment variables
+.env
+.env.local
+
+# Vercel
+.vercel
+
+# Browser automation artifacts
+.browser-data/
+.debug/
+state/
