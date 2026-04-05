@@ -4,18 +4,16 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-# Required environment variables — set these before running the script.
-SERVER_DATABASE_URL="${SERVER_DATABASE_URL:?Set SERVER_DATABASE_URL (psql-compatible connection string)}"
-ADINTEL_DATABASE_URL="${ADINTEL_DATABASE_URL:?Set ADINTEL_DATABASE_URL (SQLAlchemy connection string)}"
-ADVERTISER_NAME="${ADVERTISER_NAME:-Chime}"
-RUN_ALL_FROM_CONFIG="${RUN_ALL_FROM_CONFIG:-false}"
+# Edit these values before running the script.
+SERVER_DATABASE_URL="${SERVER_DATABASE_URL:-postgresql://yongcheng:Feedmob2026%21@127.0.0.1:5433/adinteldb}"
+ADINTEL_DATABASE_URL="${ADINTEL_DATABASE_URL:-postgresql+psycopg://yongcheng:Feedmob2026%21@127.0.0.1:5433/adinteldb}"
+ADVERTISER_NAME="${ADVERTISER_NAME:-}"
+RUN_ALL_FROM_CONFIG="${RUN_ALL_FROM_CONFIG:-true}"
 PLATFORM="${PLATFORM:-sensortower}"
 COUNTRIES="${COUNTRIES:-}"
 HEADLESS="${HEADLESS:-true}"
 DEBUG="${DEBUG:-false}"
 VERBOSE="${VERBOSE:-true}"
-USE_CDP="${USE_CDP:-false}"
-DRY_RUN="${DRY_RUN:-false}"
 SYNC_CATALOG="${SYNC_CATALOG:-true}"
 RUN_COLLECTION="${RUN_COLLECTION:-true}"
 
@@ -25,7 +23,7 @@ export ADINTEL_AUTO_APPLY_SCHEMA=false
 
 cd "${ROOT_DIR}"
 
-echo "Using server database: $(echo "${SERVER_DATABASE_URL}" | sed 's|://[^@]*@|://***:***@|')"
+echo "Using server database: ${SERVER_DATABASE_URL}"
 echo "Applying schema..."
 bash "${ROOT_DIR}/scripts/migrate_server_db.sh"
 
@@ -39,12 +37,8 @@ if [[ "${RUN_COLLECTION}" == "true" ]]; then
   echo
   echo "Running collection..."
   advertisers=()
-  successes=()
-  failures=()
   if [[ "${RUN_ALL_FROM_CONFIG}" == "true" ]]; then
-    while IFS= read -r advertiser; do
-      advertisers+=("${advertiser}")
-    done < <(
+    mapfile -t advertisers < <(
       ./.venv/bin/python - <<'PY'
 from pathlib import Path
 import yaml
@@ -78,33 +72,9 @@ PY
     if [[ "${VERBOSE}" == "true" ]]; then
       cmd+=(--verbose)
     fi
-    if [[ "${USE_CDP}" == "true" ]]; then
-      cmd+=(--use-cdp)
-    fi
 
-    if [[ "${DRY_RUN}" == "true" ]]; then
-      echo "  [dry-run] ${cmd[*]}"
-      continue
-    fi
-
-    if "${cmd[@]}"; then
-      successes+=("${advertiser}")
-    else
-      echo "Collection failed for ${advertiser}. Continuing..." >&2
-      failures+=("${advertiser}")
-    fi
+    "${cmd[@]}"
   done
-
-  echo
-  echo "Collection summary:"
-  echo "  successful: ${#successes[@]}"
-  if [[ ${#successes[@]} -gt 0 ]]; then
-    printf '  success list: %s\n' "${successes[*]}"
-  fi
-  echo "  failed: ${#failures[@]}"
-  if [[ ${#failures[@]} -gt 0 ]]; then
-    printf '  failure list: %s\n' "${failures[*]}"
-  fi
 fi
 
 echo
