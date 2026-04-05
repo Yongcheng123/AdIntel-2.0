@@ -24,7 +24,32 @@ def _make_app():
     """Build the ASGI app, returning a diagnostic app on import errors."""
     try:
         from adintel.mcp.server import create_mcp_server
-        return create_mcp_server().streamable_http_app()
+        mcp_app = create_mcp_server().streamable_http_app()
+        from starlette.applications import Starlette
+        from starlette.requests import Request
+        from starlette.responses import JSONResponse
+        from starlette.routing import Mount, Route
+
+        async def _root(request: Request) -> JSONResponse:
+            return JSONResponse(
+                {
+                    "ok": True,
+                    "name": "AdIntel MCP",
+                    "mcp_endpoint": "/api/mcp",
+                    "health": "/health",
+                }
+            )
+
+        async def _health(request: Request) -> JSONResponse:
+            return JSONResponse({"ok": True})
+
+        return Starlette(
+            routes=[
+                Route("/", _root),
+                Route("/health", _health),
+                Mount("/api/mcp", app=mcp_app),
+            ]
+        )
     except Exception:
         import traceback
         _tb = traceback.format_exc()
