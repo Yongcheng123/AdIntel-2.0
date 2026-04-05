@@ -35,7 +35,7 @@ def _make_app():
                 {
                     "ok": True,
                     "name": "AdIntel MCP",
-                    "mcp_endpoint": "/api/mcp",
+                    "mcp_endpoint": "/api/mcp/",
                     "health": "/health",
                 }
             )

@@ -154,22 +154,120 @@ adintel advertisers onboard-batch --input config/onboarding.example.yaml
 
 ## MCP Server
 
-### Option A — Local stdio (Claude Desktop / Codex)
+AdIntel supports two MCP connection styles:
 
-Start the server locally. It reads from whichever database `ADINTEL_DATABASE_URL` points to.
+- local `stdio` if you want the MCP server to run on your machine
+- remote HTTP if you want an always-on MCP endpoint on Vercel
+
+Use local `stdio` when you are developing locally or want full control over the environment.
+Use remote HTTP when you want Claude, Codex, or Antigravity to connect to the same shared Neon-backed data without starting a local process first.
+
+### Current Hosted Endpoints
+
+The current Vercel deployment exposes:
+
+- root info page: `https://adintel-delta.vercel.app/`
+- health check: `https://adintel-delta.vercel.app/health`
+- MCP endpoint: `https://adintel-delta.vercel.app/api/mcp`
+
+### Before You Install Any Client
+
+Make sure the backend is healthy first:
+
+1. Open `https://adintel-delta.vercel.app/health`
+2. Confirm it returns:
+
+```json
+{"ok": true}
+```
+
+If `/health` is not working, fix the Vercel deployment first. Client setup will not work until that endpoint is healthy.
+
+### Local MCP Server
+
+Start the MCP server locally. It will read from whichever database `ADINTEL_DATABASE_URL` points to.
 
 ```bash
 adintel mcp
-# or: adintel-mcp
+# or
+adintel-mcp
 ```
 
-**Claude Desktop** (`~/Library/Application Support/Claude/claude_desktop_config.json`):
+This is the right choice if:
+
+- you want to run everything on your machine
+- you want to connect a desktop client to a local process
+- you want to point the MCP server at a local database or a custom database URL
+
+### Hosted MCP Server On Vercel
+
+The Vercel deployment serves the same MCP tools over HTTP. Collection still runs locally and writes to Neon. Vercel only reads from Neon.
+
+Deploy flow:
+
+1. Push this repo to GitHub
+2. Import the repo in [vercel.com](https://vercel.com)
+3. Add Vercel environment variables:
+   - `ADINTEL_DATABASE_URL`
+     Set this to your Neon pooled SQLAlchemy URL, for example `postgresql+psycopg://...`
+   - `ADINTEL_AUTO_APPLY_SCHEMA`
+     Set this to `false`
+4. Deploy
+5. Verify:
+   - `https://adintel-delta.vercel.app/health`
+   - `https://adintel-delta.vercel.app/api/mcp`
+
+Important:
+
+- Vercel is read-only for this project
+- browser automation and Playwright collection still run on your machine
+- the hosted MCP server is for querying Neon-backed data, not scraping SensorTower
+
+### Install In Claude Desktop
+
+Claude Desktop usually works best with the `mcp-remote` bridge for remote HTTP MCP servers.
+
+Config file on macOS:
+
+`~/Library/Application Support/Claude/claude_desktop_config.json`
+
+Add:
 
 ```json
 {
   "mcpServers": {
     "adintel": {
-      "command": "/path/to/AdIntel/.venv/bin/adintel-mcp",
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-remote",
+        "https://adintel-delta.vercel.app/api/mcp",
+        "--transport",
+        "http-only"
+      ]
+    }
+  }
+}
+```
+
+Requirements:
+
+- Node.js installed locally
+- `npx` available in your shell
+
+After saving the file:
+
+1. Fully quit Claude Desktop
+2. Reopen it
+3. Confirm the `adintel` MCP server appears
+
+If you want to use the local MCP server instead of Vercel, use:
+
+```json
+{
+  "mcpServers": {
+    "adintel": {
+      "command": "/Users/yongcheng/Desktop/projects/AdIntel/.venv/bin/adintel-mcp",
       "env": {
         "ADINTEL_DATABASE_URL": "postgresql+psycopg://user:pass@pooler-host/db?sslmode=require"
       }
@@ -178,43 +276,121 @@ adintel mcp
 }
 ```
 
-**Codex** (`~/.codex/config.toml`):
+### Install In Claude Code
+
+Claude Code supports remote HTTP MCP directly.
+
+Add the hosted MCP server:
+
+```bash
+claude mcp add --transport http adintel https://adintel-delta.vercel.app/api/mcp
+```
+
+Verify it is registered:
+
+```bash
+claude mcp list
+```
+
+If you want to use the local stdio server instead, start `adintel mcp` locally and configure Claude Code to use that local command-based server instead of the hosted URL.
+
+### Install In Codex
+
+Codex uses `~/.codex/config.toml`.
+
+Remote hosted MCP:
 
 ```toml
 [mcp_servers.adintel]
-command = "/path/to/AdIntel/.venv/bin/adintel-mcp"
+url = "https://adintel-delta.vercel.app/api/mcp"
+```
+
+Local stdio MCP:
+
+```toml
+[mcp_servers.adintel]
+command = "/Users/yongcheng/Desktop/projects/AdIntel/.venv/bin/adintel-mcp"
 
 [mcp_servers.adintel.env]
 ADINTEL_DATABASE_URL = "postgresql+psycopg://user:pass@pooler-host/db?sslmode=require"
 ```
 
-### Option B — Vercel HTTP (always-on, no local process)
+After editing the file, restart Codex.
 
-The Vercel deployment serves the same MCP tools over HTTP. Collection still runs locally and writes to Neon — Vercel only reads.
+### Install In Antigravity
 
-**Deploy:**
-1. Push the repo to GitHub
-2. Connect the repo in [vercel.com](https://vercel.com) → New Project
-3. Add environment variable in Vercel dashboard:
-   - `ADINTEL_DATABASE_URL` = your Neon pooler URL (`postgresql+psycopg://…`)
-4. Deploy — the entry point is `api/index.py`, config is `vercel.json`
+Open AntiGravity and configure the MCP server from the MCP settings panel:
 
-**Claude Desktop with Vercel:**
+1. Open the agent panel
+2. Click `...`
+3. Open `MCP Servers`
+4. Choose `Manage MCP Servers`
+5. Open the raw config file
+
+Typical config file path:
+
+- macOS/Linux: `~/.gemini/antigravity/mcp_config.json`
+- Windows: `C:\\Users\\<USERNAME>\\.gemini\\antigravity\\mcp_config.json`
+
+Native HTTP config:
 
 ```json
 {
   "mcpServers": {
     "adintel": {
-      "transport": {
-        "type": "http",
-        "url": "https://your-project.vercel.app/mcp"
-      }
+      "serverUrl": "https://adintel-delta.vercel.app/api/mcp"
     }
   }
 }
 ```
 
-Restart Claude Desktop. The same tools (`list_advertisers`, `get_advertiser_summary`, `get_collection_health`, etc.) are available — now served from Vercel reading live Neon data.
+If native HTTP is unreliable, use `mcp-remote` instead:
+
+```json
+{
+  "mcpServers": {
+    "adintel": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-remote",
+        "https://adintel-delta.vercel.app/api/mcp"
+      ]
+    }
+  }
+}
+```
+
+### What You Can Ask The MCP
+
+Once connected, try questions like:
+
+- `List all advertisers in the database.`
+- `Show the most recent collection runs.`
+- `Give me a summary for Chime.`
+- `Which advertisers have stale or missing data?`
+- `Show collection health for the last 7 days.`
+- `What SensorTower metrics do we have for Coinbase?`
+- `Compare recent scrape status for Chime and Binance.`
+- `Which advertisers were collected successfully today?`
+- `Show me the latest scrape run metadata for Travel Town.`
+
+### Troubleshooting
+
+- `The URL returns 404 in the browser`
+  `https://adintel-delta.vercel.app/api/mcp` is an MCP endpoint, not a normal web page. Check `/health` instead.
+
+- `Claude Desktop does not show the MCP server`
+  Confirm your JSON is valid, then fully quit and reopen Claude Desktop.
+
+- `mcp-remote command not found`
+  Install Node.js so `npx` is available.
+
+- `The server appears but tools do not work`
+  Check the Vercel deployment logs and confirm `ADINTEL_DATABASE_URL` is set correctly.
+
+- `Collection is not happening on Vercel`
+  That is expected. Vercel only serves the read-only MCP layer. Run collection locally with `adintel collect ...` or `bash scripts/run_local_to_server.sh`.
 
 ---
 
