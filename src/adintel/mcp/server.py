@@ -296,6 +296,7 @@ def create_mcp_server() -> FastMCP:
             "from the shared PostgreSQL database."
         ),
         streamable_http_path="/",
+        stateless_http=is_vercel,
         transport_security=(
             TransportSecuritySettings(enable_dns_rebinding_protection=False)
             if is_vercel
