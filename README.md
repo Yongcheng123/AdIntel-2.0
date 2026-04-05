@@ -162,26 +162,20 @@ AdIntel supports two MCP connection styles:
 Use local `stdio` when you are developing locally or want full control over the environment.
 Use remote HTTP when you want Claude, Codex, or Antigravity to connect to the same shared Neon-backed data without starting a local process first.
 
-### Current Hosted Endpoints
+### Current Hosted Endpoint
 
-The current Vercel deployment exposes:
+The current Vercel deployment serves the MCP endpoint at:
 
-- root info page: `https://adintel-delta.vercel.app/`
-- health check: `https://adintel-delta.vercel.app/health`
-- MCP endpoint: `https://adintel-delta.vercel.app/api/mcp`
+- `https://adintel-delta.vercel.app/`
 
 ### Before You Install Any Client
 
-Make sure the backend is healthy first:
+Make sure the backend is reachable first:
 
-1. Open `https://adintel-delta.vercel.app/health`
-2. Confirm it returns:
+1. Open `https://adintel-delta.vercel.app/`
+2. Confirm it does not return a Vercel `404` or auth wall
 
-```json
-{"ok": true}
-```
-
-If `/health` is not working, fix the Vercel deployment first. Client setup will not work until that endpoint is healthy.
+If the root URL is not reachable, fix the Vercel deployment first. Client setup will not work until that endpoint is live.
 
 ### Local MCP Server
 
@@ -214,8 +208,7 @@ Deploy flow:
      Set this to `false`
 4. Deploy
 5. Verify:
-   - `https://adintel-delta.vercel.app/health`
-   - `https://adintel-delta.vercel.app/api/mcp`
+   - `https://adintel-delta.vercel.app/`
 
 Important:
 
@@ -241,7 +234,7 @@ Add:
       "args": [
         "-y",
         "mcp-remote",
-        "https://adintel-delta.vercel.app/api/mcp",
+        "https://adintel-delta.vercel.app/",
         "--transport",
         "http-only"
       ]
@@ -283,7 +276,7 @@ Claude Code supports remote HTTP MCP directly.
 Add the hosted MCP server:
 
 ```bash
-claude mcp add --transport http adintel https://adintel-delta.vercel.app/api/mcp
+claude mcp add --transport http adintel https://adintel-delta.vercel.app/
 ```
 
 Verify it is registered:
@@ -302,7 +295,7 @@ Remote hosted MCP:
 
 ```toml
 [mcp_servers.adintel]
-url = "https://adintel-delta.vercel.app/api/mcp"
+url = "https://adintel-delta.vercel.app/"
 ```
 
 Local stdio MCP:
@@ -338,7 +331,7 @@ Native HTTP config:
 {
   "mcpServers": {
     "adintel": {
-      "serverUrl": "https://adintel-delta.vercel.app/api/mcp"
+      "serverUrl": "https://adintel-delta.vercel.app/"
     }
   }
 }
@@ -354,7 +347,7 @@ If native HTTP is unreliable, use `mcp-remote` instead:
       "args": [
         "-y",
         "mcp-remote",
-        "https://adintel-delta.vercel.app/api/mcp"
+        "https://adintel-delta.vercel.app/"
       ]
     }
   }
@@ -378,7 +371,7 @@ Once connected, try questions like:
 ### Troubleshooting
 
 - `The URL returns 404 in the browser`
-  `https://adintel-delta.vercel.app/api/mcp` is an MCP endpoint, not a normal web page. Check `/health` instead.
+  `https://adintel-delta.vercel.app/` is an MCP endpoint, not a normal web page. The important thing is that it should not return a Vercel `404` or authentication wall.
 
 - `Claude Desktop does not show the MCP server`
   Confirm your JSON is valid, then fully quit and reopen Claude Desktop.
