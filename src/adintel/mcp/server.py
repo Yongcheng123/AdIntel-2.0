@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import date, datetime
+from decimal import Decimal
 from pathlib import Path
-
-from datetime import date
 
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
@@ -65,6 +65,17 @@ def _serialize_scrape_run(row) -> dict:
     }
 
 
+def _to_float(val):
+    """Safely convert Decimal or numeric values to float for JSON serialization."""
+    if val is None:
+        return None
+    if isinstance(val, Decimal):
+        return float(val)
+    if hasattr(val, "__float__"):
+        return float(val)
+    return val
+
+
 # Maps metric names to (model, date_column, value_columns) for time-series queries
 _METRIC_MAP = {
     "downloads": (
@@ -98,6 +109,30 @@ _METRIC_MAP = {
         ["avg_rating", "rating_count", "star_1_count", "star_2_count", "star_3_count", "star_4_count", "star_5_count"],
     ),
 }
+
+
+def _build_timeseries(session, advertiser_name: str, metric: str, country: str, days: int) -> list[dict]:
+    """Return chronological list of data-point dicts for a metric."""
+    model, date_col_name, value_cols = _METRIC_MAP[metric]
+    date_col = getattr(model, date_col_name)
+
+    q = select(model).where(model.advertiser_name == advertiser_name)
+    if hasattr(model, "country"):
+        q = q.where(model.country == country)
+
+    rows = session.scalars(
+        q.order_by(desc(date_col)).limit(days)
+    ).all()
+
+    points = []
+    for row in reversed(rows):
+        point = {"date": getattr(row, date_col_name).isoformat()}
+        if hasattr(row, "country"):
+            point["country"] = row.country
+        for col in value_cols:
+            point[col] = _to_float(getattr(row, col, None))
+        points.append(point)
+    return points
 
 
 def _build_summary(advertiser_name: str, country: str | None = None) -> dict:
@@ -172,7 +207,7 @@ def _build_summary(advertiser_name: str, country: str | None = None) -> dict:
                 {
                     "period_date": latest_download.period_date.isoformat(),
                     "downloads": latest_download.downloads,
-                    "revenue": float(latest_download.revenue) if latest_download.revenue is not None else None,
+                    "revenue": _to_float(latest_download.revenue),
                     "country": latest_download.country,
                     "os": latest_download.os,
                 }
@@ -182,9 +217,9 @@ def _build_summary(advertiser_name: str, country: str | None = None) -> dict:
             "latest_usage": (
                 {
                     "period_date": latest_usage.period_date.isoformat(),
-                    "avg_dau": latest_usage.avg_dau,
-                    "time_spent_min": latest_usage.time_spent_min,
-                    "sessions_per_day": latest_usage.sessions_per_day,
+                    "avg_dau": _to_float(latest_usage.avg_dau),
+                    "time_spent_min": _to_float(latest_usage.time_spent_min),
+                    "sessions_per_day": _to_float(latest_usage.sessions_per_day),
                     "country": latest_usage.country,
                 }
                 if latest_usage
@@ -193,9 +228,9 @@ def _build_summary(advertiser_name: str, country: str | None = None) -> dict:
             "latest_retention": (
                 {
                     "cohort_date": latest_retention.cohort_date.isoformat(),
-                    "d1": latest_retention.d1,
-                    "d7": latest_retention.d7,
-                    "d30": latest_retention.d30,
+                    "d1": _to_float(latest_retention.d1),
+                    "d7": _to_float(latest_retention.d7),
+                    "d30": _to_float(latest_retention.d30),
                     "country": latest_retention.country,
                 }
                 if latest_retention
@@ -205,7 +240,7 @@ def _build_summary(advertiser_name: str, country: str | None = None) -> dict:
                 {
                     "period_date": latest_impression_share.period_date.isoformat(),
                     "network": latest_impression_share.network,
-                    "sov_pct": latest_impression_share.sov_pct,
+                    "sov_pct": _to_float(latest_impression_share.sov_pct),
                     "country": latest_impression_share.country,
                 }
                 if latest_impression_share
@@ -225,8 +260,8 @@ def _build_summary(advertiser_name: str, country: str | None = None) -> dict:
             "demographics": [
                 {
                     "age_bracket": row.age_bracket,
-                    "male_pct": row.male_pct,
-                    "female_pct": row.female_pct,
+                    "male_pct": _to_float(row.male_pct),
+                    "female_pct": _to_float(row.female_pct),
                     "country": row.country,
                 }
                 for row in demographics
@@ -234,7 +269,7 @@ def _build_summary(advertiser_name: str, country: str | None = None) -> dict:
             "latest_reviews": (
                 {
                     "period_date": latest_reviews.period_date.isoformat(),
-                    "avg_rating": latest_reviews.avg_rating,
+                    "avg_rating": _to_float(latest_reviews.avg_rating),
                     "rating_count": latest_reviews.rating_count,
                     "star_1_count": latest_reviews.star_1_count,
                     "star_5_count": latest_reviews.star_5_count,
@@ -248,7 +283,7 @@ def _build_summary(advertiser_name: str, country: str | None = None) -> dict:
                     "review_id": row.review_id,
                     "review_date": row.review_date.isoformat(),
                     "country": row.country,
-                    "star_rating": row.star_rating,
+                    "star_rating": _to_float(row.star_rating),
                     "title": row.title,
                     "body": row.body,
                     "sentiment": row.sentiment,
@@ -272,8 +307,8 @@ def _build_summary(advertiser_name: str, country: str | None = None) -> dict:
                     "keyword": row.keyword,
                     "keyword_type": row.keyword_type,
                     "rank": row.rank,
-                    "traffic_score": row.traffic_score,
-                    "opportunity_score": row.opportunity_score,
+                    "traffic_score": _to_float(row.traffic_score),
+                    "opportunity_score": _to_float(row.opportunity_score),
                     "country": row.country,
                     "device": row.device,
                 }
@@ -292,8 +327,23 @@ def create_mcp_server() -> FastMCP:
     server = FastMCP(
         name="AdIntel",
         instructions=(
-            "AdIntel exposes structured advertiser metadata and SensorTower-derived intelligence "
-            "from the shared PostgreSQL database."
+            "AdIntel provides SensorTower-derived competitive intelligence for mobile advertisers.\n\n"
+            "WORKFLOW:\n"
+            "- Competitive comparison (2+ advertisers) → call get_full_comparison.\n"
+            "  Returns 30-day timeseries for downloads and DAU, per-network ad placement with SOV trends,\n"
+            "  AND a server-computed gap_analysis showing exclusive networks, SOV ratios, efficiency\n"
+            "  indicators, and pre-written opportunity bullets. Use this instead of compare_advertisers\n"
+            "  for any analysis task.\n\n"
+            "- Single advertiser deep dive → call get_advertiser_summary.\n"
+            "  Returns all latest data: demographics, reviews, creatives, ASO keywords.\n\n"
+            "- Custom date range or individual metric → use get_metric_timeseries.\n"
+            "  Metrics: downloads, usage, retention, impression_share, rankings, reviews.\n\n"
+            "COMPETITIVE GAP ANALYSIS REPORT FORMAT:\n"
+            "1. Executive summary (who leads, by how much)\n"
+            "2. Side-by-side metrics table (downloads, DAU, revenue, total SOV)\n"
+            "3. Ad placement gap: networks each advertiser uses exclusively\n"
+            "4. Network efficiency: downloads-per-SOV-point comparison\n"
+            "5. Opportunities: untapped networks, underweight channels, strategic moves"
         ),
         streamable_http_path="/",
         stateless_http=is_vercel,
@@ -492,10 +542,7 @@ def create_mcp_server() -> FastMCP:
             if hasattr(row, "country"):
                 point["country"] = row.country
             for col in value_cols:
-                val = getattr(row, col, None)
-                if val is not None and hasattr(val, "__float__"):
-                    val = float(val)
-                point[col] = val
+                point[col] = _to_float(getattr(row, col, None))
             data_points.append(point)
 
         return json.dumps({
@@ -509,9 +556,9 @@ def create_mcp_server() -> FastMCP:
     @server.tool(
         name="compare_advertisers",
         description=(
-            "Compare the latest metrics for two or more advertisers side by side. "
-            "Available metrics: downloads, usage, retention, impression_share, rankings, reviews. "
-            "Useful for competitive analysis."
+            "Quick single-metric snapshot for two or more advertisers side by side. "
+            "For full competitive analysis with 30-day trends and ad placement gap analysis, "
+            "use get_full_comparison instead."
         ),
     )
     def compare_advertisers(
@@ -545,10 +592,7 @@ def create_mcp_server() -> FastMCP:
 
                 point = {"date": getattr(row, date_col_name).isoformat()}
                 for col in value_cols:
-                    val = getattr(row, col, None)
-                    if val is not None and hasattr(val, "__float__"):
-                        val = float(val)
-                    point[col] = val
+                    point[col] = _to_float(getattr(row, col, None))
                 results[name] = point
 
         return json.dumps({
@@ -556,6 +600,197 @@ def create_mcp_server() -> FastMCP:
             "country": country,
             "comparison": results,
         }, indent=2)
+
+    @server.tool(
+        name="get_full_comparison",
+        description=(
+            "Full competitive comparison for two or more advertisers. "
+            "Returns 30-day timeseries for downloads and DAU, per-network ad impression share with trends, "
+            "and a server-computed gap_analysis with exclusive networks, SOV ratios, efficiency indicators, "
+            "and opportunity bullets. Use this for any competitive analysis task."
+        ),
+    )
+    def get_full_comparison(
+        advertiser_names: str,
+        country: str = "US",
+        days: int = 30,
+    ) -> str:
+        names = [n.strip() for n in advertiser_names.split(",") if n.strip()]
+        if not names:
+            return json.dumps({"error": "No advertiser names provided."})
+        days = max(1, min(days, 90))
+
+        advertiser_data: dict[str, dict] = {}
+
+        with _session_factory()() as session:
+            for name in names:
+                # ── Snapshot ──────────────────────────────────────────
+                advertiser = AdvertiserRepository(session).get(name)
+                if advertiser is None:
+                    advertiser_data[name] = {"found": False}
+                    continue
+
+                def _q(model, adv_name=name):
+                    q = select(model).where(model.advertiser_name == adv_name)
+                    if hasattr(model, "country"):
+                        q = q.where(model.country == country)
+                    return q
+
+                latest_dl = session.scalar(
+                    _q(SensorTowerDownloadRecord)
+                    .order_by(desc(SensorTowerDownloadRecord.period_date))
+                )
+                latest_usage = session.scalar(
+                    _q(SensorTowerUsageRecord)
+                    .order_by(desc(SensorTowerUsageRecord.period_date))
+                )
+                latest_imp = session.scalar(
+                    _q(SensorTowerImpressionShareRecord)
+                    .where(SensorTowerImpressionShareRecord.network == "all")
+                    .order_by(desc(SensorTowerImpressionShareRecord.period_date))
+                )
+
+                snapshot = {
+                    "downloads": latest_dl.downloads if latest_dl else None,
+                    "revenue": _to_float(latest_dl.revenue) if latest_dl else None,
+                    "downloads_date": latest_dl.period_date.isoformat() if latest_dl else None,
+                    "avg_dau": _to_float(latest_usage.avg_dau) if latest_usage else None,
+                    "sessions_per_day": _to_float(latest_usage.sessions_per_day) if latest_usage else None,
+                    "usage_date": latest_usage.period_date.isoformat() if latest_usage else None,
+                    "total_sov": _to_float(latest_imp.sov_pct) if latest_imp else None,
+                    "sov_date": latest_imp.period_date.isoformat() if latest_imp else None,
+                }
+
+                # ── Timeseries: downloads & usage ─────────────────────
+                dl_series = _build_timeseries(session, name, "downloads", country, days)
+                usage_series = _build_timeseries(session, name, "usage", country, days)
+
+                # ── Per-network impression share ───────────────────────
+                imp_rows = session.scalars(
+                    select(SensorTowerImpressionShareRecord)
+                    .where(SensorTowerImpressionShareRecord.advertiser_name == name)
+                    .where(SensorTowerImpressionShareRecord.country == country)
+                    .where(SensorTowerImpressionShareRecord.network != "all")
+                    .where(SensorTowerImpressionShareRecord.network != "other")
+                    .order_by(desc(SensorTowerImpressionShareRecord.period_date))
+                    .limit(days * 20)  # enough rows for all networks × days
+                ).all()
+
+                # Group by network → latest SOV + recent trend
+                networks_map: dict[str, dict] = {}
+                for row in imp_rows:
+                    net = row.network
+                    sov = _to_float(row.sov_pct) or 0.0
+                    dt = row.period_date.isoformat()
+                    if net not in networks_map:
+                        networks_map[net] = {"latest_sov": sov, "latest_date": dt, "trend": []}
+                    networks_map[net]["trend"].append({"date": dt, "sov_pct": sov})
+
+                # Trim trend to `days` entries and sort chronologically
+                for net in networks_map:
+                    networks_map[net]["trend"] = sorted(
+                        networks_map[net]["trend"], key=lambda x: x["date"]
+                    )[-days:]
+
+                advertiser_data[name] = {
+                    "found": True,
+                    "snapshot": snapshot,
+                    "timeseries": {
+                        "downloads": dl_series,
+                        "usage": usage_series,
+                    },
+                    "ad_placement": {
+                        "networks": networks_map,
+                        "total_sov": snapshot["total_sov"],
+                        "network_count": len(networks_map),
+                    },
+                }
+
+        # ── Gap analysis (computed across all advertisers) ─────────────
+        found = {n: d for n, d in advertiser_data.items() if d.get("found")}
+
+        gap_analysis: dict = {}
+        if len(found) >= 2:
+            # Network coverage sets
+            network_sets: dict[str, set] = {
+                n: {net for net, v in d["ad_placement"]["networks"].items() if v["latest_sov"] > 0}
+                for n, d in found.items()
+            }
+            all_nets = set().union(*network_sets.values())
+            shared = set.intersection(*network_sets.values()) if network_sets else set()
+            exclusive: dict[str, list] = {
+                n: sorted(network_sets[n] - shared) for n in found
+            }
+
+            # SOV comparison
+            sov_totals = {n: d["snapshot"]["total_sov"] or 0.0 for n, d in found.items()}
+            sov_leader = max(sov_totals, key=lambda n: sov_totals[n])
+            sov_follower = min(sov_totals, key=lambda n: sov_totals[n])
+            sov_ratio = (
+                round(sov_totals[sov_leader] / sov_totals[sov_follower], 1)
+                if sov_totals[sov_follower] > 0 else None
+            )
+
+            # Efficiency: downloads per SOV point
+            efficiency: dict[str, float | None] = {}
+            for n, d in found.items():
+                dl = d["snapshot"]["downloads"]
+                sov = d["snapshot"]["total_sov"]
+                efficiency[n] = round(dl / sov, 1) if dl and sov and sov > 0 else None
+
+            # Opportunity bullets
+            opportunities: list[str] = []
+            for n, d in found.items():
+                others = [o for o in found if o != n]
+                for other in others:
+                    for net in exclusive.get(other, []):
+                        other_sov = found[other]["ad_placement"]["networks"].get(net, {}).get("latest_sov", 0)
+                        if other_sov and other_sov > 0:
+                            opportunities.append(
+                                f"{n} has no presence on {net} — {other}'s active network (SOV {other_sov:.4%})"
+                            )
+
+            # Top network for each advertiser
+            for n, d in found.items():
+                nets = d["ad_placement"]["networks"]
+                if nets:
+                    top_net = max(nets, key=lambda x: nets[x]["latest_sov"])
+                    top_sov = nets[top_net]["latest_sov"]
+                    opportunities.append(
+                        f"{n}'s strongest network is {top_net} (SOV {top_sov:.4%})"
+                    )
+
+            gap_analysis = {
+                "network_coverage": {
+                    n: {"exclusive": exclusive[n], "shared_with_others": sorted(shared)}
+                    for n in found
+                },
+                "all_networks_seen": sorted(all_nets),
+                "sov_comparison": {
+                    "leader": sov_leader,
+                    "totals": {n: round(v, 6) for n, v in sov_totals.items()},
+                    "ratio": sov_ratio,
+                    "insight": (
+                        f"{sov_leader} commands {sov_ratio}x the total impression share of {sov_follower}."
+                        if sov_ratio else "SOV data unavailable for comparison."
+                    ),
+                },
+                "efficiency_indicators": {
+                    n: {"downloads_per_sov_point": efficiency[n]} for n in found
+                },
+                "opportunities": opportunities,
+            }
+
+        return json.dumps(
+            {
+                "comparison_date": date.today().isoformat(),
+                "country": country,
+                "days": days,
+                "advertisers": advertiser_data,
+                "gap_analysis": gap_analysis,
+            },
+            indent=2,
+        )
 
     return server
 
