@@ -247,6 +247,22 @@ If you prefer DB-first operations, you can disable sync and manage IDs directly 
 SYNC_CATALOG=false bash scripts/run_local_to_server.sh
 ```
 
+### One-Command Run Order
+
+When you run the main helper script, it does these steps in order:
+
+1. sync catalog to the database
+2. validate catalog vs DB
+3. run collection for the selected advertisers
+
+So you usually do **not** need to run `adintel advertisers sync-catalog` separately before `bash scripts/run_local_to_server.sh`.
+
+Typical daily run:
+
+```bash
+bash scripts/run_local_to_server.sh
+```
+
 ### Validate Catalog Vs DB
 
 Use this check to catch drift before collection:

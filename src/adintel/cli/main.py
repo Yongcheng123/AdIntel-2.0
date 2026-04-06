@@ -213,6 +213,14 @@ def collect_advertiser(
     advertiser_name: str,
     platform: str = typer.Option("all", help="Platform name or 'all'."),
     countries: str | None = typer.Option(None, help="Comma-separated country codes."),
+    metrics: str | None = typer.Option(
+        None,
+        help=(
+            "Comma-separated metric names to collect. "
+            "For SensorTower: downloads, retention, impression_share, demographics, "
+            "engagement, reviews, rankings, creatives, aso_keywords."
+        ),
+    ),
     headless: bool = typer.Option(False, help="Run browser headlessly."),
     debug: bool = typer.Option(False, help="Enable debug mode."),
     use_cdp: bool = typer.Option(False, help="Connect to an existing browser over CDP."),
@@ -235,6 +243,7 @@ def collect_advertiser(
                 advertiser,
                 platforms=_platforms(platform),
                 countries=[c.strip().upper() for c in countries.split(",")] if countries else None,
+                metrics=[m.strip().lower() for m in metrics.split(",") if m.strip()] if metrics else None,
                 headless=headless,
                 debug=debug,
                 use_cdp=use_cdp,

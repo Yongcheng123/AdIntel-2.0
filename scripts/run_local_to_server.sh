@@ -21,6 +21,7 @@ ADVERTISER_NAME="${ADVERTISER_NAME:-}"
 RUN_ALL_FROM_CONFIG="${RUN_ALL_FROM_CONFIG:-true}"
 PLATFORM="${PLATFORM:-sensortower}"
 COUNTRIES="${COUNTRIES:-}"
+METRICS="${METRICS:-}"
 HEADLESS="${HEADLESS:-true}"
 DEBUG="${DEBUG:-false}"
 VERBOSE="${VERBOSE:-true}"
@@ -94,6 +95,9 @@ PY
 
     if [[ -n "${COUNTRIES}" ]]; then
       cmd+=(--countries "${COUNTRIES}")
+    fi
+    if [[ -n "${METRICS}" ]]; then
+      cmd+=(--metrics "${METRICS}")
     fi
     if [[ "${HEADLESS}" == "true" ]]; then
       cmd+=(--headless)

@@ -124,6 +124,18 @@ class SensorTowerCollector(PlatformCollector):
                 ("aso_keywords", lambda c: self._collect_aso_keywords(page, request, repository, c, category_state)),
             ]
 
+            if request.metrics:
+                selected = {metric.strip().lower() for metric in request.metrics if metric.strip()}
+                available = {name for name, _ in metrics}
+                unknown = sorted(selected - available)
+                if unknown:
+                    raise ValueError(
+                        f"Unknown SensorTower metrics: {', '.join(unknown)}. "
+                        f"Available: {', '.join(sorted(available))}"
+                    )
+                metrics = [entry for entry in metrics if entry[0] in selected]
+                logger.info("Metric filter enabled for %s: %s", request.advertiser.name, ", ".join(selected))
+
             for country in request.countries:
                 profile = request.advertiser.platforms.sensortower
                 logger.info(

@@ -78,6 +78,7 @@ class CollectorRunRequest(BaseModel):
     advertiser: AdvertiserProfile
     platform: PlatformName
     countries: list[str]
+    metrics: list[str] | None = None
     headless: bool = False
     debug: bool = False
     started_at: datetime = Field(default_factory=lambda: datetime.now(UTC))

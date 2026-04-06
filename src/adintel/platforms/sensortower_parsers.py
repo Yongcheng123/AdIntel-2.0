@@ -331,7 +331,7 @@ def parse_review_text_rows(data: dict, advertiser_name: str) -> list[dict]:
                 "sentiment": item.get("sentiment"),
                 "tags": item.get("tags") or [],
                 "app_version": item.get("version") or item.get("app_version"),
-                "os": item.get("os") or item.get("platform") or item.get("device_type"),
+                "os": item.get("os") or item.get("platform") or item.get("device_type") or "N/A",
             }
         )
     return rows
