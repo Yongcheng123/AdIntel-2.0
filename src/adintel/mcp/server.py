@@ -811,6 +811,60 @@ def create_mcp_server() -> FastMCP:
 
     # ── GEO (Generative Engine Optimization) Analysis Tools ─────────────
 
+    def _resolve_geo_target(session, advertiser_name: str) -> str:
+        """Resolve a display name like 'Chime' to its otterly domain like 'chime.com'.
+
+        Resolution order:
+        1. Exact match in otterlyai_prompts (already a domain key).
+        2. Advertiser catalog domain match (display name → domain).
+        3. Case-insensitive partial name match in catalog.
+        4. Fall back to the original string (let callers handle missing data).
+        """
+        from sqlalchemy import func as _func
+        from adintel.db.models import AdvertiserRecord
+
+        # 1. Exact match already in otterly data
+        exists = session.scalar(
+            select(OtterlyPromptRecord.target_brand_or_domain_name)
+            .where(OtterlyPromptRecord.target_brand_or_domain_name == advertiser_name)
+            .limit(1)
+        )
+        if exists:
+            return advertiser_name
+
+        # 2 & 3. Look up via advertiser catalog
+        row = session.scalar(
+            select(AdvertiserRecord).where(
+                _func.lower(AdvertiserRecord.name) == advertiser_name.lower()
+            )
+        )
+        if row is None:
+            row = session.scalar(
+                select(AdvertiserRecord).where(
+                    _func.lower(AdvertiserRecord.name).contains(advertiser_name.lower())
+                )
+            )
+        if row is not None and row.domain:
+            # Confirm the domain exists in otterly data
+            domain_exists = session.scalar(
+                select(OtterlyPromptRecord.target_brand_or_domain_name)
+                .where(OtterlyPromptRecord.target_brand_or_domain_name == row.domain)
+                .limit(1)
+            )
+            if domain_exists:
+                return row.domain
+
+        # 4. Fuzzy domain match directly in otterly data (e.g. "Dave" → "dave.com")
+        fuzzy = session.scalar(
+            select(OtterlyPromptRecord.target_brand_or_domain_name)
+            .where(OtterlyPromptRecord.target_brand_or_domain_name.ilike(f"%{advertiser_name}%"))
+            .limit(1)
+        )
+        if fuzzy:
+            return fuzzy
+
+        return advertiser_name
+
     def _geo_engine_breakdown(session, target: str, country: str | None) -> list[dict]:
         q = (
             select(
@@ -896,6 +950,7 @@ def create_mcp_server() -> FastMCP:
         country: str | None = None,
     ) -> str:
         with _session_factory()() as session:
+            advertiser_name = _resolve_geo_target(session, advertiser_name)
             # Aggregate overview via SQL instead of loading all rows
             overview_q = (
                 select(
@@ -956,6 +1011,9 @@ def create_mcp_server() -> FastMCP:
         names = [n.strip() for n in advertiser_names.split(",") if n.strip()]
         if len(names) < 2:
             return json.dumps({"error": "Provide at least 2 comma-separated advertiser names."})
+
+        with _session_factory()() as _resolve_session:
+            names = [_resolve_geo_target(_resolve_session, n) for n in names]
 
         advertiser_data: dict[str, dict] = {}
 
@@ -1085,6 +1143,7 @@ def create_mcp_server() -> FastMCP:
     ) -> str:
         limit = max(1, min(limit, 100))
         with _session_factory()() as session:
+            advertiser_name = _resolve_geo_target(session, advertiser_name)
             # Aggregate overview via SQL
             overview_q = (
                 select(
@@ -1202,6 +1261,7 @@ def create_mcp_server() -> FastMCP:
     ) -> str:
         limit = max(1, min(limit, 100))
         with _session_factory()() as session:
+            advertiser_name = _resolve_geo_target(session, advertiser_name)
             base_q = select(OtterlyPromptRecord).where(
                 OtterlyPromptRecord.target_brand_or_domain_name == advertiser_name
             )
@@ -1286,6 +1346,139 @@ def create_mcp_server() -> FastMCP:
             "blind_spot_prompts": blind_spot_prompts,
             "negative_sentiment_prompts": negative_prompts,
             "sentiment_distribution": sentiment_dist,
+        }, indent=2)
+
+    @server.tool(
+        name="get_geo_data_availability",
+        description=(
+            "Check what GEO (Otterly) data is available in the database. "
+            "Shows which brands have data, which AI engines are covered, date range, "
+            "row counts, and field completeness gaps. Use this before running any GEO "
+            "analysis to understand data coverage."
+        ),
+    )
+    def get_geo_data_availability(advertiser_name: str | None = None) -> str:
+        with _session_factory()() as session:
+            if advertiser_name:
+                advertiser_name = _resolve_geo_target(session, advertiser_name)
+
+            def _prompt_filter(q):
+                if advertiser_name:
+                    q = q.where(OtterlyPromptRecord.target_brand_or_domain_name == advertiser_name)
+                return q
+
+            def _citation_filter(q):
+                if advertiser_name:
+                    q = q.where(OtterlyCitationRecord.target_brand_or_domain_name == advertiser_name)
+                return q
+
+            # Overall prompt stats
+            p_total = session.scalar(_prompt_filter(select(func.count()).select_from(OtterlyPromptRecord))) or 0
+            c_total = session.scalar(_citation_filter(select(func.count()).select_from(OtterlyCitationRecord))) or 0
+
+            if p_total == 0 and c_total == 0:
+                return json.dumps({
+                    "found": False,
+                    "advertiser_name": advertiser_name,
+                    "message": "No GEO data found." + (f" '{advertiser_name}' is not tracked in Otterly." if advertiser_name else ""),
+                })
+
+            # Date range
+            date_q = _prompt_filter(
+                select(
+                    func.min(OtterlyPromptRecord.query_window_start_date).label("earliest"),
+                    func.max(OtterlyPromptRecord.query_window_end_date).label("latest"),
+                    func.count(OtterlyPromptRecord.query_window_end_date.distinct()).label("snapshots"),
+                ).select_from(OtterlyPromptRecord)
+            )
+            dates = session.execute(date_q).one()
+
+            # Per-brand prompt coverage
+            brand_q = _prompt_filter(
+                select(
+                    OtterlyPromptRecord.target_brand_or_domain_name,
+                    OtterlyPromptRecord.ai_engine,
+                    func.count().label("prompt_rows"),
+                    func.sum(case((OtterlyPromptRecord.domain_cited.is_(True), 1), else_=0)).label("cited"),
+                ).select_from(OtterlyPromptRecord)
+                .group_by(OtterlyPromptRecord.target_brand_or_domain_name, OtterlyPromptRecord.ai_engine)
+                .order_by(OtterlyPromptRecord.target_brand_or_domain_name, OtterlyPromptRecord.ai_engine)
+            )
+            brand_rows = session.execute(brand_q).all()
+
+            # Aggregate by brand
+            brands_summary: dict[str, dict] = {}
+            for row in brand_rows:
+                b = row.target_brand_or_domain_name
+                if b not in brands_summary:
+                    brands_summary[b] = {"engines": [], "total_prompts": 0, "total_cited": 0}
+                rate = round(row.cited / row.prompt_rows, 3) if row.prompt_rows else 0
+                brands_summary[b]["engines"].append({
+                    "engine": row.ai_engine,
+                    "prompts": row.prompt_rows,
+                    "cited": row.cited,
+                    "visibility_rate": rate,
+                })
+                brands_summary[b]["total_prompts"] += row.prompt_rows
+                brands_summary[b]["total_cited"] += row.cited
+
+            # Citation coverage per brand
+            cit_q = _citation_filter(
+                select(
+                    OtterlyCitationRecord.target_brand_or_domain_name,
+                    func.count().label("citation_rows"),
+                ).select_from(OtterlyCitationRecord)
+                .group_by(OtterlyCitationRecord.target_brand_or_domain_name)
+            )
+            for row in session.execute(cit_q).all():
+                if row.target_brand_or_domain_name in brands_summary:
+                    brands_summary[row.target_brand_or_domain_name]["citation_rows"] = row.citation_rows
+
+            # Field completeness gaps (on full table or filtered)
+            null_sentiment = session.scalar(
+                _prompt_filter(select(func.count()).select_from(OtterlyPromptRecord).where(OtterlyPromptRecord.sentiment_label.is_(None)))
+            ) or 0
+            gap_pct = round(null_sentiment / p_total, 3) if p_total else 0
+            field_gaps = []
+            if gap_pct > 0.05:
+                field_gaps.append({
+                    "field": "sentiment_label",
+                    "null_rows": null_sentiment,
+                    "null_pct": gap_pct,
+                    "impact": "sentiment analysis and negative-prompt detection will be incomplete",
+                })
+
+            # Engines present
+            engines = [r[0] for r in session.execute(
+                _prompt_filter(select(OtterlyPromptRecord.ai_engine).distinct().select_from(OtterlyPromptRecord))
+            ).all()]
+            countries = [r[0] for r in session.execute(
+                _prompt_filter(select(OtterlyPromptRecord.country_code).distinct().select_from(OtterlyPromptRecord))
+            ).all()]
+
+        return json.dumps({
+            "scope": advertiser_name or "all brands",
+            "summary": {
+                "brands_tracked": len(brands_summary),
+                "ai_engines": sorted(engines),
+                "countries": sorted(countries),
+                "date_range": {
+                    "start": dates.earliest.isoformat() if dates.earliest else None,
+                    "end": dates.latest.isoformat() if dates.latest else None,
+                    "snapshots": dates.snapshots,
+                },
+                "total_prompt_rows": p_total,
+                "total_citation_rows": c_total,
+            },
+            "brands": {
+                b: {
+                    **d,
+                    "visibility_rate": round(d["total_cited"] / d["total_prompts"], 3) if d["total_prompts"] else 0,
+                }
+                for b, d in brands_summary.items()
+            },
+            "field_gaps": field_gaps,
+            "ready_for_analysis": len(field_gaps) == 0,
         }, indent=2)
 
     return server

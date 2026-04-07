@@ -382,11 +382,19 @@ def _bulk_upsert(
     update_targets = update_columns or [
         key for key in rows[0].keys() if key not in set(conflict_columns)
     ]
-    stmt = insert(model).values(rows)
-    update_map = {column: getattr(stmt.excluded, column) for column in update_targets}
-    session.execute(stmt.on_conflict_do_update(index_elements=conflict_columns, set_=update_map))
-    session.commit()
-    return len(rows)
+
+    # PostgreSQL limits parameters to 65535; chunk to stay well under that.
+    num_cols = len(rows[0])
+    chunk_size = max(1, 60_000 // num_cols)
+    total = 0
+    for i in range(0, len(rows), chunk_size):
+        chunk = rows[i : i + chunk_size]
+        stmt = insert(model).values(chunk)
+        update_map = {column: getattr(stmt.excluded, column) for column in update_targets}
+        session.execute(stmt.on_conflict_do_update(index_elements=conflict_columns, set_=update_map))
+        session.commit()
+        total += len(chunk)
+    return total
 
 
 class SensorTowerRepository:
