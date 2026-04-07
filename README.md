@@ -108,6 +108,15 @@ SensorTower data uses provider-prefixed table names:
 - `sensortower_aso_keywords`
   - keyword rank plus traffic and opportunity scores
 
+### OtterlyAI Tables
+
+OtterlyAI data also uses provider-prefixed table names:
+
+- `otterlyai_prompts`
+  - prompt-level AI visibility rows by brand/domain, country, engine, and query window
+- `otterlyai_citations`
+  - cited URL rows by brand/domain, country, engine, and query window
+
 ### Naming Convention
 
 Use this naming convention going forward:
@@ -119,7 +128,8 @@ Examples:
 
 - `sensortower_downloads`
 - `adclarity_creatives`
-- `otterlyai_visibility`
+- `otterlyai_prompts`
+- `otterlyai_citations`
 
 This is the recommended structure if you plan to add more providers later.
 

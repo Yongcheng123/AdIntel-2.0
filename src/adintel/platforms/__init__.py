@@ -1,1 +1,1 @@
-"""Platform-specific collectors."""
+"""Platform-specific collectors and provider helpers."""

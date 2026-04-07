@@ -1,0 +1,20 @@
+start_date: "2026-02-20"
+end_date: "2026-04-06"
+services:
+  - chatgpt
+  - perplexity
+  - google_ai_overview
+  - google_ai_mode
+  - copilot
+  - microsoft_copilot
+  - gemini
+sleep_range_seconds:
+  - 2
+  - 5
+targets:
+  - brand: scopely.com
+    country: us
+  - brand: supercell.com
+    country: us
+  - brand: playrix.com
+    country: us

@@ -250,3 +250,60 @@ class SensorTowerAsoKeywordRecord(Base):
     country: Mapped[str] = mapped_column(String(8), default="US")
     device: Mapped[str] = mapped_column(String(32), default="iphone")
     scraped_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
+
+
+class OtterlyPromptRecord(Base):
+    __tablename__ = "otterlyai_prompts"
+    __table_args__ = (
+        UniqueConstraint(
+            "target_brand_or_domain_name",
+            "country_code",
+            "ai_engine",
+            "prompt_text",
+            "query_window_end_date",
+            name="uq_otterlyai_prompts",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    target_brand_or_domain_name: Mapped[str] = mapped_column(String(255), index=True)
+    country_code: Mapped[str] = mapped_column(String(8), index=True)
+    query_window_start_date: Mapped[date] = mapped_column(Date)
+    query_window_end_date: Mapped[date] = mapped_column(Date)
+    prompt_text: Mapped[str] = mapped_column(Text)
+    prompt_volume: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    target_rank: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    ai_engine: Mapped[str] = mapped_column(String(64), index=True)
+    domain_cited: Mapped[bool] = mapped_column(Boolean, default=False)
+    sentiment_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    sentiment_label: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    competitors: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    scraped_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
+
+
+class OtterlyCitationRecord(Base):
+    __tablename__ = "otterlyai_citations"
+    __table_args__ = (
+        UniqueConstraint(
+            "target_brand_or_domain_name",
+            "country_code",
+            "ai_engine",
+            "cited_url",
+            "query_window_end_date",
+            name="uq_otterlyai_citations",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    target_brand_or_domain_name: Mapped[str] = mapped_column(String(255), index=True)
+    country_code: Mapped[str] = mapped_column(String(8), index=True)
+    query_window_start_date: Mapped[date] = mapped_column(Date)
+    query_window_end_date: Mapped[date] = mapped_column(Date)
+    ai_engine: Mapped[str] = mapped_column(String(64), index=True)
+    cited_url: Mapped[str] = mapped_column(Text)
+    cited_domain: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    citation_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    brand_mentioned: Mapped[bool] = mapped_column(Boolean, default=False)
+    domain_category: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    competitors: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    scraped_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))

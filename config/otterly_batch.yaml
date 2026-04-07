@@ -1,0 +1,68 @@
+start_date: "2026-02-20"
+end_date: "2026-04-06"
+services:
+  - chatgpt
+  - perplexity
+  - google_ai_overview
+  - google_ai_mode
+  - copilot
+  - microsoft_copilot
+  - gemini
+sleep_range_seconds:
+  - 2
+  - 5
+targets:
+  - brand: chime.com
+    country: us
+  - brand: binance.com
+    country: us
+  - brand: binance.com
+    country: tr
+  - brand: binance.com
+    country: br
+  - brand: binance.com
+    country: ng
+  - brand: Albert
+    country: us
+  - brand: Coinbase
+    country: us
+  - brand: eToro
+    country: us
+  - brand: Travel Town
+    country: us
+  - brand: Pokemon GO
+    country: us
+  - brand: Royal Match
+    country: us
+  - brand: MoneyLion
+    country: us
+  - brand: Kraken
+    country: us
+  - brand: Current
+    country: us
+  - brand: Dave
+    country: us
+  - brand: Koho
+    country: us
+  - brand: Mistplay
+    country: us
+  - brand: MonopolyGo
+    country: us
+  - brand: Possible Finance
+    country: us
+  - brand: Realtor
+    country: us
+  - brand: ScrabbleGo
+    country: us
+  - brand: Shopback
+    country: us
+  - brand: Stash
+    country: us
+  - brand: Tilt
+    country: us
+  - brand: Upside
+    country: us
+  - brand: swagbucks
+    country: us
+  - brand: testerup
+    country: us

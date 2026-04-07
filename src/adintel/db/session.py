@@ -72,6 +72,7 @@ def ensure_schema(engine, settings: AppSettings, *, force: bool = False) -> None
         ).scalar()
 
         if applied_hash == current_hash and not force:
+            Base.metadata.create_all(connection)
             return
 
         raw_connection = connection.connection

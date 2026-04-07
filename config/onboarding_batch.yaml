@@ -1,14 +1,14 @@
 advertisers:
-  - name: Candy Crush
+  - name: Chime
     countries:
       - US
-  - name: Pokémon GO
+  - name: Binance
     countries:
       - US
-  - name: Royal Match
-    countries:
-      - US  
-  - name: Travel Town
+      - TR
+      - BR
+      - NG
+  - name: Albert
     countries:
       - US
   - name: Coinbase
@@ -17,12 +17,60 @@ advertisers:
   - name: eToro
     countries:
       - US
-  - name: Albert
+  - name: Travel Town
+    countries:
+      - US
+  - name: Pokemon GO
+    countries:
+      - US
+  - name: Royal Match
     countries:
       - US
   - name: MoneyLion
     countries:
       - US
   - name: Kraken
+    countries:
+      - US
+  - name: Current
+    countries:
+      - US
+  - name: Dave
+    countries:
+      - US
+  - name: Koho
+    countries:
+      - US
+  - name: Mistplay
+    countries:
+      - US
+  - name: MonopolyGo
+    countries:
+      - US
+  - name: Possible Finance
+    countries:
+      - US
+  - name: Realtor
+    countries:
+      - US
+  - name: ScrabbleGo
+    countries:
+      - US
+  - name: Shopback
+    countries:
+      - US
+  - name: Stash
+    countries:
+      - US
+  - name: Tilt
+    countries:
+      - US
+  - name: Upside
+    countries:
+      - US
+  - name: swagbucks
+    countries:
+      - US
+  - name: testerup
     countries:
       - US

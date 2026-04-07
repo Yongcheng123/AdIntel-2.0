@@ -9,6 +9,8 @@ from sqlalchemy.orm import Session
 from adintel.core.models import AdvertiserProfile
 from adintel.db.models import (
     AdvertiserRecord,
+    OtterlyCitationRecord,
+    OtterlyPromptRecord,
     RequestedAdvertiserRecord,
     ScrapeRunMetricRecord,
     SensorTowerAsoKeywordRecord,
@@ -374,6 +376,9 @@ def _bulk_upsert(
         deduped_rows[conflict_key] = row
     rows = list(deduped_rows.values())
 
+    all_columns = set().union(*(row.keys() for row in rows))
+    rows = [{column: row.get(column) for column in all_columns} for row in rows]
+
     update_targets = update_columns or [
         key for key in rows[0].keys() if key not in set(conflict_columns)
     ]
@@ -466,4 +471,37 @@ class SensorTowerRepository:
             SensorTowerAsoKeywordRecord,
             rows,
             conflict_columns=["advertiser_name", "keyword", "country", "device"],
+        )
+
+
+class OtterlyRepository:
+    def __init__(self, session: Session) -> None:
+        self.session = session
+
+    def upsert_prompts(self, rows: list[dict]) -> int:
+        return _bulk_upsert(
+            self.session,
+            OtterlyPromptRecord,
+            rows,
+            conflict_columns=[
+                "target_brand_or_domain_name",
+                "country_code",
+                "ai_engine",
+                "prompt_text",
+                "query_window_end_date",
+            ],
+        )
+
+    def upsert_citations(self, rows: list[dict]) -> int:
+        return _bulk_upsert(
+            self.session,
+            OtterlyCitationRecord,
+            rows,
+            conflict_columns=[
+                "target_brand_or_domain_name",
+                "country_code",
+                "ai_engine",
+                "cited_url",
+                "query_window_end_date",
+            ],
         )
