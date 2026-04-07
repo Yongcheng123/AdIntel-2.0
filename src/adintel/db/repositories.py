@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
@@ -63,6 +63,62 @@ class AdvertiserRepository:
         if row is None:
             return None
         return _to_profile(row)
+
+    def resolve(self, query: str) -> AdvertiserProfile | None:
+        """Fuzzy lookup: exact name → case-insensitive name → domain match → substring match."""
+        # 1. Exact match
+        row = self.session.scalar(
+            select(AdvertiserRecord).where(AdvertiserRecord.name == query)
+        )
+        if row:
+            return _to_profile(row)
+
+        q = query.lower().strip()
+
+        # 2. Case-insensitive name or domain exact match
+        row = self.session.scalar(
+            select(AdvertiserRecord).where(
+                or_(
+                    AdvertiserRecord.name.ilike(q),
+                    AdvertiserRecord.domain.ilike(q),
+                )
+            )
+        )
+        if row:
+            return _to_profile(row)
+
+        # 3. Substring match on name or domain (e.g. "pokemon go" ⊂ "pokemongolive.com")
+        slug = q.replace(" ", "").replace("-", "").replace("_", "")
+        rows = self.session.scalars(select(AdvertiserRecord)).all()
+        for r in rows:
+            name_slug = (r.name or "").lower().replace(" ", "").replace("-", "").replace("_", "").replace(".", "")
+            domain_slug = (r.domain or "").lower().replace(" ", "").replace("-", "").replace("_", "").replace(".", "")
+            if slug in name_slug or slug in domain_slug or name_slug in slug or domain_slug in slug:
+                return _to_profile(r)
+
+        return None
+
+    def suggest(self, query: str, limit: int = 3, threshold: float = 0.5) -> list[str]:
+        """Return up to `limit` candidate advertiser names that fuzzy-match `query`.
+
+        Uses SequenceMatcher on both name and domain so typos like 'pokmon go'
+        still surface 'pokemongolive.com'. Only candidates above `threshold`
+        similarity are returned, sorted best-first.
+        """
+        from difflib import SequenceMatcher
+
+        q = query.lower().strip()
+        rows = self.session.scalars(select(AdvertiserRecord)).all()
+        scored: list[tuple[float, str]] = []
+        for r in rows:
+            name_score = SequenceMatcher(None, q, (r.name or "").lower()).ratio()
+            domain_score = SequenceMatcher(None, q, (r.domain or "").lower()).ratio()
+            best = max(name_score, domain_score)
+            if best >= threshold:
+                scored.append((best, r.name))
+
+        scored.sort(key=lambda x: x[0], reverse=True)
+        return [name for _, name in scored[:limit]]
 
     def upsert(self, advertiser: AdvertiserProfile) -> AdvertiserProfile:
         record = self.session.scalar(

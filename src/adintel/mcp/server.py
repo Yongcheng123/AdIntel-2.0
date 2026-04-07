@@ -139,17 +139,26 @@ def _build_timeseries(session, advertiser_name: str, metric: str, country: str, 
 def _build_summary(advertiser_name: str, country: str | None = None) -> dict:
     with _session_factory()() as session:
         advertisers = AdvertiserRepository(session)
-        advertiser = advertisers.get(advertiser_name)
+        advertiser = advertisers.resolve(advertiser_name)
         if advertiser is None:
+            suggestions = advertisers.suggest(advertiser_name)
             return {
                 "found": False,
                 "advertiser_name": advertiser_name,
-                "message": "Advertiser not found.",
+                "message": (
+                    f"No advertiser found for '{advertiser_name}'. Did you mean: "
+                    + ", ".join(f"'{s}'" for s in suggestions)
+                    + "?"
+                ) if suggestions else f"No advertiser found for '{advertiser_name}'.",
+                "did_you_mean": suggestions,
             }
+
+        # Use the canonical name from the database for all queries
+        canonical_name = advertiser.name
 
         def _q(model):
             """Build a base query with advertiser + optional country filter."""
-            q = select(model).where(model.advertiser_name == advertiser_name)
+            q = select(model).where(model.advertiser_name == canonical_name)
             if country and hasattr(model, "country"):
                 q = q.where(model.country == country)
             return q
@@ -538,9 +547,23 @@ def create_mcp_server() -> FastMCP:
         date_col = getattr(model, date_col_name)
 
         with _session_factory()() as session:
+            repo = AdvertiserRepository(session)
+            resolved = repo.resolve(advertiser_name)
+            if resolved is None:
+                suggestions = repo.suggest(advertiser_name)
+                return json.dumps({
+                    "found": False,
+                    "advertiser_name": advertiser_name,
+                    "message": (
+                        f"No advertiser found for '{advertiser_name}'. Did you mean: "
+                        + ", ".join(f"'{s}'" for s in suggestions) + "?"
+                    ) if suggestions else f"No advertiser found for '{advertiser_name}'.",
+                    "did_you_mean": suggestions,
+                }, indent=2)
+            canonical_name = resolved.name
             q = (
                 select(model)
-                .where(model.advertiser_name == advertiser_name)
+                .where(model.advertiser_name == canonical_name)
             )
             if hasattr(model, "country"):
                 q = q.where(model.country == country)
@@ -563,7 +586,7 @@ def create_mcp_server() -> FastMCP:
             data_points.append(point)
 
         return json.dumps({
-            "advertiser_name": advertiser_name,
+            "advertiser_name": canonical_name,
             "metric": metric,
             "country": country,
             "count": len(data_points),
@@ -595,22 +618,36 @@ def create_mcp_server() -> FastMCP:
 
         with _session_factory()() as session:
             for name in names:
+                repo = AdvertiserRepository(session)
+                advertiser = repo.resolve(name)
+                if advertiser is None:
+                    suggestions = repo.suggest(name)
+                    results[name] = {
+                        "found": False,
+                        "did_you_mean": suggestions,
+                        "message": (
+                            f"No advertiser found for '{name}'. Did you mean: "
+                            + ", ".join(f"'{s}'" for s in suggestions) + "?"
+                        ) if suggestions else f"No advertiser found for '{name}'.",
+                    }
+                    continue
+                canonical = advertiser.name
                 q = (
                     select(model)
-                    .where(model.advertiser_name == name)
+                    .where(model.advertiser_name == canonical)
                 )
                 if hasattr(model, "country"):
                     q = q.where(model.country == country)
 
                 row = session.scalar(q.order_by(desc(date_col)))
                 if row is None:
-                    results[name] = None
+                    results[canonical] = None
                     continue
 
                 point = {"date": getattr(row, date_col_name).isoformat()}
                 for col in value_cols:
                     point[col] = _to_float(getattr(row, col, None))
-                results[name] = point
+                results[canonical] = point
 
         return json.dumps({
             "metric": metric,
@@ -642,12 +679,23 @@ def create_mcp_server() -> FastMCP:
         with _session_factory()() as session:
             for name in names:
                 # ── Snapshot ──────────────────────────────────────────
-                advertiser = AdvertiserRepository(session).get(name)
+                repo = AdvertiserRepository(session)
+                advertiser = repo.resolve(name)
                 if advertiser is None:
-                    advertiser_data[name] = {"found": False}
+                    suggestions = repo.suggest(name)
+                    advertiser_data[name] = {
+                        "found": False,
+                        "message": (
+                            f"No advertiser found for '{name}'. Did you mean: "
+                            + ", ".join(f"'{s}'" for s in suggestions) + "?"
+                        ) if suggestions else f"No advertiser found for '{name}'.",
+                        "did_you_mean": suggestions,
+                    }
                     continue
 
-                def _q(model, adv_name=name):
+                canonical_name = advertiser.name
+
+                def _q(model, adv_name=canonical_name):
                     q = select(model).where(model.advertiser_name == adv_name)
                     if hasattr(model, "country"):
                         q = q.where(model.country == country)
@@ -679,13 +727,13 @@ def create_mcp_server() -> FastMCP:
                 }
 
                 # ── Timeseries: downloads & usage ─────────────────────
-                dl_series = _build_timeseries(session, name, "downloads", country, days)
-                usage_series = _build_timeseries(session, name, "usage", country, days)
+                dl_series = _build_timeseries(session, canonical_name, "downloads", country, days)
+                usage_series = _build_timeseries(session, canonical_name, "usage", country, days)
 
                 # ── Per-network impression share ───────────────────────
                 imp_rows = session.scalars(
                     select(SensorTowerImpressionShareRecord)
-                    .where(SensorTowerImpressionShareRecord.advertiser_name == name)
+                    .where(SensorTowerImpressionShareRecord.advertiser_name == canonical_name)
                     .where(SensorTowerImpressionShareRecord.country == country)
                     .where(SensorTowerImpressionShareRecord.network != "all")
                     .where(SensorTowerImpressionShareRecord.network != "other")
@@ -709,7 +757,7 @@ def create_mcp_server() -> FastMCP:
                         networks_map[net]["trend"], key=lambda x: x["date"]
                     )[-days:]
 
-                advertiser_data[name] = {
+                advertiser_data[canonical_name] = {
                     "found": True,
                     "snapshot": snapshot,
                     "timeseries": {
