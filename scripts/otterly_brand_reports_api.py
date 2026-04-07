@@ -19,7 +19,7 @@ from adintel.platforms.otterlyai import (
     list_reports_payload,
     load_targets,
 )
-from adintel.platforms.otterlyai_parsers import normalize_engine_label
+from adintel.platforms.otterlyai_parsers import normalize_engine_label, normalize_engine_service_key
 
 
 app = typer.Typer(
@@ -170,7 +170,11 @@ def batch_collect(
         except ValueError as exc:
             raise typer.BadParameter(str(exc)) from exc
 
-    service_values = [value.strip().lower() for value in (services or "chatgpt").split(",") if value.strip()]
+    service_values = [
+        normalize_engine_service_key(value)
+        for value in (services or "ChatGPT").split(",")
+        if value.strip()
+    ]
     summaries = asyncio.run(
         collect_batch(
             targets=targets,
@@ -185,6 +189,21 @@ def batch_collect(
         )
     )
     typer.echo(json.dumps(summaries, indent=2))
+
+
+@app.command("create-report")
+def create_report_cmd(
+    domain: str = typer.Argument(..., help="Brand domain, e.g. current.com"),
+    brand_name: str | None = typer.Option(None, "--brand-name", help="Display name; defaults to domain"),
+    no_headless: bool = typer.Option(False, "--no-headless", help="Show browser window"),
+) -> None:
+    """Create a brand report in Otterly for the given domain."""
+    from adintel.platforms.otterlyai import create_report
+
+    name = brand_name or domain
+    typer.echo(f"Creating Otterly report for {domain} ...")
+    report_id = asyncio.run(create_report(name, domain, headless=not no_headless))
+    typer.echo(f"Created report: {report_id}")
 
 
 if __name__ == "__main__":

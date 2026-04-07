@@ -1,18 +1,31 @@
-start_date: "2026-02-20"
+start_date: "2026-03-05"
 end_date: "2026-04-06"
 services:
-  - chatgpt
-  - perplexity
-  - google_ai_overview
-  - google_ai_mode
-  - copilot
-  - microsoft_copilot
-  - gemini
-sleep_range_seconds:
-  - 2
-  - 5
+  - ChatGPT
+  - Perplexity
+  - Google AI Overview
+  - Microsoft Copilot
+
 targets:
   - brand: chime.com
+    country: us
+  - brand: current.com
+    country: us
+  - brand: dave.com
+    country: us
+  - brand: koho.ca
+    country: ca
+  - brand: pokemongolive.com
+    country: us
+  - brand: royalmatch.com
+    country: us
+  - brand: scrabblego.com
+    country: us
+  - brand: monopolygo.com
+    country: us
+  - brand: mistplay.com
+    country: us
+  - brand: upside.com
     country: us
   - brand: binance.com
     country: us
@@ -22,47 +35,29 @@ targets:
     country: br
   - brand: binance.com
     country: ng
-  - brand: Albert
+  - brand: albert.com
     country: us
-  - brand: Coinbase
+  - brand: coinbase.com
     country: us
-  - brand: eToro
+  - brand: etoro.com
     country: us
-  - brand: Travel Town
+  - brand: traveltowngame.com
     country: us
-  - brand: Pokemon GO
+  - brand: moneylion.com
     country: us
-  - brand: Royal Match
+  - brand: kraken.com
     country: us
-  - brand: MoneyLion
+  - brand: possiblefinance.com
     country: us
-  - brand: Kraken
+  - brand: realtor.com
     country: us
-  - brand: Current
+  - brand: shopback.com
     country: us
-  - brand: Dave
+  - brand: stash.com
     country: us
-  - brand: Koho
+  - brand: tilt.com
     country: us
-  - brand: Mistplay
+  - brand: swagbucks.com
     country: us
-  - brand: MonopolyGo
-    country: us
-  - brand: Possible Finance
-    country: us
-  - brand: Realtor
-    country: us
-  - brand: ScrabbleGo
-    country: us
-  - brand: Shopback
-    country: us
-  - brand: Stash
-    country: us
-  - brand: Tilt
-    country: us
-  - brand: Upside
-    country: us
-  - brand: swagbucks
-    country: us
-  - brand: testerup
+  - brand: testerup.com
     country: us

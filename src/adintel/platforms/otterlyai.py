@@ -5,6 +5,7 @@ import base64
 import json
 import os
 import random
+import re
 import time
 from pathlib import Path
 from typing import Any
@@ -205,6 +206,7 @@ async def fetch_citations_payload(
     end_date: str,
     service: str | None,
     page_size: int,
+    page: int = 1,
 ) -> dict[str, Any]:
     query = urlencode(
         {
@@ -213,7 +215,7 @@ async def fetch_citations_payload(
             "country": country.lower(),
             "groupByPeriod": "day",
             "aggregatePeriodData": "true",
-            "page": 1,
+            "page": page,
             "pageSize": page_size,
             "sortBy": "citations",
             "sortOrder": "desc",
@@ -222,6 +224,53 @@ async def fetch_citations_payload(
     if service:
         query += f"&services={service}"
     return await api_get(context, f"/brands/reports/{report_id}/citations?{query}")
+
+
+async def fetch_all_citations_payload(
+    context: BrowserContext,
+    *,
+    report_id: str,
+    country: str,
+    start_date: str,
+    end_date: str,
+    service: str | None,
+    page_size: int,
+) -> dict[str, Any]:
+    first_payload = await fetch_citations_payload(
+        context,
+        report_id=report_id,
+        country=country,
+        start_date=start_date,
+        end_date=end_date,
+        service=service,
+        page_size=page_size,
+        page=1,
+    )
+
+    cited_urls = list(first_payload.get("citedUrls") or [])
+    page = 2
+    while len(first_payload.get("citedUrls") or []) == page_size:
+        next_payload = await fetch_citations_payload(
+            context,
+            report_id=report_id,
+            country=country,
+            start_date=start_date,
+            end_date=end_date,
+            service=service,
+            page_size=page_size,
+            page=page,
+        )
+        next_rows = next_payload.get("citedUrls") or []
+        if not next_rows:
+            break
+        cited_urls.extend(next_rows)
+        if len(next_rows) < page_size:
+            break
+        page += 1
+
+    merged_payload = dict(first_payload)
+    merged_payload["citedUrls"] = cited_urls
+    return merged_payload
 
 
 def lookup_report_id(reports: list[dict[str, Any]], brand_or_domain: str) -> str | None:
@@ -234,6 +283,96 @@ def lookup_report_id(reports: list[dict[str, Any]], brand_or_domain: str) -> str
             if isinstance(report_id, str) and report_id:
                 return report_id
     return None
+
+
+async def expect_enabled(locator: Any, timeout: int = 10_000) -> None:
+    """Poll until a button/element is enabled."""
+    deadline = asyncio.get_event_loop().time() + timeout / 1000
+    while True:
+        if await locator.is_enabled():
+            return
+        if asyncio.get_event_loop().time() > deadline:
+            raise TimeoutError(f"Element still disabled after {timeout}ms")
+        await asyncio.sleep(0.3)
+
+
+async def create_report(
+    brand_name: str,
+    domain: str,
+    *,
+    select_all_prompts: bool = True,
+    headless: bool = True,
+) -> str:
+    """Navigate Otterly's 3-step wizard to create a brand report. Returns the new report ID."""
+    playwright, context = await launch_context(headless=headless)
+    try:
+        await get_auth_headers(context)  # ensure auth is valid / cached
+        page = await ensure_page(context)
+
+        # Step 1 — Brand details
+        # Navigate to reports page first to find the create button
+        print(f"[create_report] Navigating to {APP_URL}/reports")
+        await page.goto(f"{APP_URL}/reports", wait_until="domcontentloaded")
+        await page.wait_for_load_state("networkidle", timeout=20_000)
+        print(f"[create_report] Current URL after /reports: {page.url}")
+
+        # Save a screenshot to debug what the UI looks like
+        screenshot_path = PROJECT_ROOT / "state" / "create_report_debug.png"
+        await page.screenshot(path=screenshot_path)
+        print(f"[create_report] Saved screenshot to {screenshot_path}")
+
+        # Try to find and click the create button
+        print("[create_report] Looking for create button...")
+        # Try different selectors
+        all_buttons = page.get_by_role("button")
+        count = await all_buttons.count()
+        print(f"[create_report] Found {count} buttons on the page")
+        for i in range(min(10, count)):
+            btn = all_buttons.nth(i)
+            name = await btn.get_attribute("aria-label") or await btn.text_content()
+            print(f"  Button {i}: {name}")
+
+        # Try to navigate directly to create page
+        print("[create_report] Trying direct navigation to /reports/create")
+        await page.goto(f"{APP_URL}/reports/create", wait_until="domcontentloaded")
+        await page.wait_for_load_state("networkidle", timeout=20_000)
+        print(f"[create_report] Current URL after create redirect: {page.url}")
+
+        # Wait for the form to be ready
+        report_title_field = page.get_by_placeholder("Enter report title")
+        await report_title_field.wait_for(state="visible", timeout=15_000)
+
+        await report_title_field.fill(brand_name)
+        await page.get_by_placeholder("Enter brand name").fill(brand_name)
+        await page.get_by_placeholder("Enter brand domain (e.g., example.com)").fill(domain)
+        next_btn = page.get_by_role("button", name="Next step")
+        await next_btn.wait_for(state="visible")
+        await expect_enabled(next_btn)
+        await next_btn.click()
+
+        # Step 2 — Add prompts
+        await page.wait_for_selector("text=All prompts", timeout=10_000)
+        if select_all_prompts:
+            await page.get_by_role("checkbox", name="Select all").check()
+            # Move selected prompts to the report using the right-arrow transfer button
+            transfer_right = page.locator("button:has(img[alt='right'])").first
+            await transfer_right.wait_for(state="visible")
+            await transfer_right.click()
+        next_btn2 = page.get_by_role("button", name="Next")
+        await expect_enabled(next_btn2)
+        await next_btn2.click()
+
+        # Step 3 — Competitors (skip, just save)
+        save_btn = page.get_by_role("button", name="Save")
+        await save_btn.wait_for(state="visible")
+        await save_btn.click()
+
+        # Extract new report ID from URL
+        await page.wait_for_url(re.compile(r"/reports/[^/]+$"), timeout=15_000)
+        report_id = page.url.split("/reports/")[-1]
+        return report_id
+    finally:
+        await close_context(playwright, context)
 
 
 def _normalize_targets_payload(payload: Any) -> list[dict[str, str]]:
@@ -324,7 +463,7 @@ async def export_citation_rows(
     playwright, context = await launch_context(headless=headless)
     try:
         report_payload = await fetch_report_payload(context, report_id)
-        citations_payload = await fetch_citations_payload(
+        citations_payload = await fetch_all_citations_payload(
             context,
             report_id=report_id,
             country=country,
@@ -391,9 +530,7 @@ async def collect_batch(
                         end_date=end_date,
                         service=service,
                     )
-                    # TODO: pagination — currently only fetches page 1 of citations.
-                    # If a brand has more citations than page_size, the rest are dropped.
-                    citations_payload = await fetch_citations_payload(
+                    citations_payload = await fetch_all_citations_payload(
                         context,
                         report_id=report_id,
                         country=country,

@@ -1,0 +1,5 @@
+banking: Chime, Current, Dave, Albert, MoneyLion, Possible, Stash, Tilt, Koho
+crypto & exchanges: Binance (US/TR/BR/NG), Coinbase, Kraken, eToro
+mobile gaming & Rewards: Pokemon GO, Royal Match, Scrabble GO, Monopoly GO, Travel Town, Mistplay, Testerup, Swagbucks
+Lifestyle & Rewards: Upside, Shopback, Swagbucks
+Realtor: Realtor

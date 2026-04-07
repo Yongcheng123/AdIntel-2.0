@@ -37,7 +37,7 @@ advertisers:
     adclarity: {}
     sensortower:
       unified_app_id: 55d3a1a302ac64350a000bc2
-      publisher_id: 5628915002ac648b2800328b
+      publisher_id: 
       ios_app_id: '412786607'
 - name: Coinbase
   category: Finance
@@ -142,7 +142,7 @@ advertisers:
 - name: Koho
   category: Finance
   countries:
-  - US
+  - CA
   platforms:
     sensortower:
       unified_app_id: 58873af20211a6fd3e00006e

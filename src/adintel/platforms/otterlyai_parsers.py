@@ -13,6 +13,18 @@ ENGINE_LABELS = {
     "gemini": "Google Gemini",
 }
 
+ENGINE_SERVICE_KEYS = {
+    "chatgpt": "chatgpt",
+    "ChatGPT": "chatgpt",
+    "perplexity": "perplexity",
+    "Perplexity": "perplexity",
+    "google_ai_overview": "google_ai_overview",
+    "Google AI Overview": "google_ai_overview",
+    "copilot": "microsoft_copilot",
+    "microsoft_copilot": "microsoft_copilot",
+    "Microsoft Copilot": "microsoft_copilot",
+}
+
 
 def compact_dict(value: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in value.items() if v is not None and v != ""}
@@ -22,6 +34,15 @@ def normalize_engine_label(service: str | None) -> str | None:
     if not service:
         return None
     return ENGINE_LABELS.get(service.lower(), service)
+
+
+def normalize_engine_service_key(service: str | None) -> str | None:
+    if not service:
+        return None
+    normalized = ENGINE_SERVICE_KEYS.get(service)
+    if normalized is not None:
+        return normalized
+    return ENGINE_SERVICE_KEYS.get(service.strip(), service.strip().lower())
 
 
 def normalize_sentiment_label(score: int | float | None) -> str | None:

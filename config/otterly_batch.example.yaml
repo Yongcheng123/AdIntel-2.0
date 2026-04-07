@@ -1,20 +1,42 @@
-start_date: "2026-02-20"
+start_date: "2026-03-05"
 end_date: "2026-04-06"
 services:
-  - chatgpt
-  - perplexity
-  - google_ai_overview
-  - google_ai_mode
-  - copilot
-  - microsoft_copilot
-  - gemini
-sleep_range_seconds:
-  - 2
-  - 5
+  - ChatGPT
+  - Perplexity
+  - Google AI Overview
+  - Microsoft Copilot
 targets:
-  - brand: scopely.com
+  - brand: binance.com
     country: us
-  - brand: supercell.com
+  - brand: binance.com
+    country: tr
+  - brand: binance.com
+    country: br
+  - brand: binance.com
+    country: ng
+  - brand: albert.com
     country: us
-  - brand: playrix.com
+  - brand: coinbase.com
+    country: us
+  - brand: etoro.com
+    country: us
+  - brand: traveltowngame.com
+    country: us
+  - brand: moneylion.com
+    country: us
+  - brand: kraken.com
+    country: us
+  - brand: possiblefinance.com
+    country: us
+  - brand: realtor.com
+    country: us
+  - brand: shopback.com
+    country: us
+  - brand: stash.com
+    country: us
+  - brand: tilt.com
+    country: us
+  - brand: swagbucks.com
+    country: us
+  - brand: testerup.com
     country: us
