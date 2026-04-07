@@ -129,8 +129,11 @@ async def refresh_auth_headers_from_browser(context: BrowserContext) -> dict[str
             captured["x-workspace-id"] = workspace
 
     page.on("request", on_request)
-    await page.goto(f"{APP_URL}/reports", wait_until="domcontentloaded")
-    await page.wait_for_timeout(2500)
+    try:
+        await page.goto(f"{APP_URL}/reports", wait_until="domcontentloaded")
+        await page.wait_for_timeout(2500)
+    finally:
+        page.remove_listener("request", on_request)
 
     if not captured:
         raise RuntimeError("Could not capture Otterly auth headers from live page requests. Re-run login.")
@@ -372,69 +375,87 @@ async def collect_batch(
                 summaries.append({"brand": brand, "country": country, "status": "missing_report"})
                 continue
 
-            report_payload = await fetch_report_payload(context, report_id)
+            try:
+                report_payload = await fetch_report_payload(context, report_id)
+            except Exception as exc:
+                summaries.append({"brand": brand, "country": country, "status": "error", "error": str(exc)})
+                continue
 
             for service in services:
-                prompts_payload = await fetch_prompts_payload(
-                    context,
-                    report_id=report_id,
-                    country=country,
-                    start_date=start_date,
-                    end_date=end_date,
-                    service=service,
-                )
-                citations_payload = await fetch_citations_payload(
-                    context,
-                    report_id=report_id,
-                    country=country,
-                    start_date=start_date,
-                    end_date=end_date,
-                    service=service,
-                    page_size=page_size,
-                )
+                try:
+                    prompts_payload = await fetch_prompts_payload(
+                        context,
+                        report_id=report_id,
+                        country=country,
+                        start_date=start_date,
+                        end_date=end_date,
+                        service=service,
+                    )
+                    # TODO: pagination — currently only fetches page 1 of citations.
+                    # If a brand has more citations than page_size, the rest are dropped.
+                    citations_payload = await fetch_citations_payload(
+                        context,
+                        report_id=report_id,
+                        country=country,
+                        start_date=start_date,
+                        end_date=end_date,
+                        service=service,
+                        page_size=page_size,
+                    )
 
-                prompt_rows = refine_prompt_rows(
-                    report_payload,
-                    prompts_payload,
-                    country=country,
-                    start_date=start_date,
-                    end_date=end_date,
-                    service=service,
-                )
-                citation_rows = refine_citation_rows(
-                    report_payload,
-                    citations_payload,
-                    country=country,
-                    start_date=start_date,
-                    end_date=end_date,
-                    service=service,
-                )
+                    prompt_rows = refine_prompt_rows(
+                        report_payload,
+                        prompts_payload,
+                        country=country,
+                        start_date=start_date,
+                        end_date=end_date,
+                        service=service,
+                    )
+                    citation_rows = refine_citation_rows(
+                        report_payload,
+                        citations_payload,
+                        country=country,
+                        start_date=start_date,
+                        end_date=end_date,
+                        service=service,
+                    )
 
-                batch_rows["prompts"].extend(prompt_rows)
-                batch_rows["citations"].extend(citation_rows)
-                summaries.append(
-                    {
-                        "brand": brand,
-                        "country": country,
-                        "service": normalize_engine_label(service),
-                        "report_id": report_id,
-                        "prompt_rows": len(prompt_rows),
-                        "citation_rows": len(citation_rows),
-                        "status": "ok",
-                    }
-                )
+                    batch_rows["prompts"].extend(prompt_rows)
+                    batch_rows["citations"].extend(citation_rows)
+                    summaries.append(
+                        {
+                            "brand": brand,
+                            "country": country,
+                            "service": normalize_engine_label(service),
+                            "report_id": report_id,
+                            "prompt_rows": len(prompt_rows),
+                            "citation_rows": len(citation_rows),
+                            "status": "ok",
+                        }
+                    )
+
+                    if save_files:
+                        service_suffix = f".{service}" if service else ""
+                        prompt_target = OUTPUT_DIR / f"{report_id}.{country}.{end_date}{service_suffix}.refined.json"
+                        citation_target = OUTPUT_DIR / f"{report_id}.{country}.{end_date}{service_suffix}.citations.refined.json"
+                        prompt_target.parent.mkdir(parents=True, exist_ok=True)
+                        prompt_target.write_text(json.dumps(prompt_rows, indent=2), encoding="utf-8")
+                        citation_target.write_text(json.dumps(citation_rows, indent=2), encoding="utf-8")
+                except Exception as exc:
+                    summaries.append(
+                        {
+                            "brand": brand,
+                            "country": country,
+                            "service": normalize_engine_label(service),
+                            "report_id": report_id,
+                            "status": "error",
+                            "error": str(exc),
+                        }
+                    )
 
                 if sleep_range_seconds is not None:
                     min_seconds, max_seconds = sleep_range_seconds
                     await asyncio.sleep(random.uniform(min_seconds, max_seconds))
-
-                if save_files:
-                    service_suffix = f".{service}" if service else ""
-                    prompt_target = OUTPUT_DIR / f"{report_id}.{country}.{end_date}{service_suffix}.refined.json"
-                    citation_target = OUTPUT_DIR / f"{report_id}.{country}.{end_date}{service_suffix}.citations.refined.json"
-                    prompt_target.parent.mkdir(parents=True, exist_ok=True)
-                    prompt_target.write_text(json.dumps(prompt_rows, indent=2), encoding="utf-8")
-                    citation_target.write_text(json.dumps(citation_rows, indent=2), encoding="utf-8")
         if write_db:
             settings = get_settings()
             session_factory = build_session_factory(settings)

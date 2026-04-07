@@ -15,7 +15,7 @@ ENGINE_LABELS = {
 
 
 def compact_dict(value: dict[str, Any]) -> dict[str, Any]:
-    return {k: v for k, v in value.items() if v not in (None, "", [], {}, ())}
+    return {k: v for k, v in value.items() if v is not None and v != ""}
 
 
 def normalize_engine_label(service: str | None) -> str | None:

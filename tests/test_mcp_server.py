@@ -24,6 +24,11 @@ def test_mcp_server_registers_expected_tools() -> None:
         "get_recent_collection_runs",
         "get_metric_timeseries",
         "compare_advertisers",
+        "get_full_comparison",
+        "get_geo_visibility_summary",
+        "compare_geo_visibility",
+        "get_geo_citation_analysis",
+        "get_geo_prompt_insights",
     ]
 
 

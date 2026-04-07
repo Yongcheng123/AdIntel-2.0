@@ -217,6 +217,49 @@ CREATE TABLE IF NOT EXISTS sensortower_aso_keywords (
 
 CREATE INDEX IF NOT EXISTS idx_sensortower_aso_keywords_advertiser_name ON sensortower_aso_keywords(advertiser_name);
 
+CREATE TABLE IF NOT EXISTS otterlyai_prompts (
+  id SERIAL PRIMARY KEY,
+  target_brand_or_domain_name VARCHAR(255) NOT NULL,
+  country_code VARCHAR(8) NOT NULL,
+  query_window_start_date DATE NOT NULL,
+  query_window_end_date DATE NOT NULL,
+  prompt_text TEXT NOT NULL,
+  prompt_volume INTEGER,
+  target_rank INTEGER,
+  ai_engine VARCHAR(64) NOT NULL,
+  domain_cited BOOLEAN NOT NULL DEFAULT FALSE,
+  sentiment_score DOUBLE PRECISION,
+  sentiment_label VARCHAR(32),
+  competitors JSONB,
+  scraped_at TIMESTAMPTZ DEFAULT now(),
+  CONSTRAINT uq_otterlyai_prompts UNIQUE (target_brand_or_domain_name, country_code, ai_engine, prompt_text, query_window_end_date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_otterlyai_prompts_target ON otterlyai_prompts(target_brand_or_domain_name);
+CREATE INDEX IF NOT EXISTS idx_otterlyai_prompts_country ON otterlyai_prompts(country_code);
+CREATE INDEX IF NOT EXISTS idx_otterlyai_prompts_engine ON otterlyai_prompts(ai_engine);
+
+CREATE TABLE IF NOT EXISTS otterlyai_citations (
+  id SERIAL PRIMARY KEY,
+  target_brand_or_domain_name VARCHAR(255) NOT NULL,
+  country_code VARCHAR(8) NOT NULL,
+  query_window_start_date DATE NOT NULL,
+  query_window_end_date DATE NOT NULL,
+  ai_engine VARCHAR(64) NOT NULL,
+  cited_url TEXT NOT NULL,
+  cited_domain VARCHAR(255),
+  citation_count INTEGER,
+  brand_mentioned BOOLEAN NOT NULL DEFAULT FALSE,
+  domain_category VARCHAR(128),
+  competitors JSONB,
+  scraped_at TIMESTAMPTZ DEFAULT now(),
+  CONSTRAINT uq_otterlyai_citations UNIQUE (target_brand_or_domain_name, country_code, ai_engine, cited_url, query_window_end_date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_otterlyai_citations_target ON otterlyai_citations(target_brand_or_domain_name);
+CREATE INDEX IF NOT EXISTS idx_otterlyai_citations_country ON otterlyai_citations(country_code);
+CREATE INDEX IF NOT EXISTS idx_otterlyai_citations_engine ON otterlyai_citations(ai_engine);
+
 -- Additive migrations for existing databases
 --
 -- When you add a new column to an existing table, append the matching ALTER

@@ -6,39 +6,15 @@ from pathlib import Path
 from typing import Any
 
 import typer
-from playwright.async_api import BrowserContext, Page, async_playwright
+from playwright.async_api import BrowserContext  # noqa: F401 — used in type hints
+
+from adintel.platforms.otterlyai import APP_URL, OUTPUT_DIR, close_context, ensure_page, launch_context
 
 
 app = typer.Typer(help="Standalone Otterly GEO audit helper. Keeps AdIntel's existing functions unchanged.")
 
-ROOT = Path(__file__).resolve().parents[1]
-STATE_DIR = ROOT / "state" / "browser" / "otterly"
-OUTPUT_DIR = ROOT / "output" / "otterly"
-APP_URL = "https://app.otterly.ai"
 LIST_AUDITS_URL = "https://api.otterly.ai/audits/geo/url?version=2"
 AUDIT_URL_TEMPLATE = "https://api.otterly.ai/audits/geo/url/{audit_id}"
-
-
-async def launch_context(*, headless: bool) -> tuple[Any, BrowserContext]:
-    STATE_DIR.mkdir(parents=True, exist_ok=True)
-    playwright = await async_playwright().start()
-    context = await playwright.chromium.launch_persistent_context(
-        str(STATE_DIR),
-        channel="chromium",
-        headless=headless,
-        viewport={"width": 1440, "height": 900},
-        args=["--disable-dev-shm-usage"],
-    )
-    return playwright, context
-
-
-async def close_context(playwright: Any, context: BrowserContext) -> None:
-    await context.close()
-    await playwright.stop()
-
-
-async def ensure_page(context: BrowserContext) -> Page:
-    return context.pages[0] if context.pages else await context.new_page()
 
 
 async def get_session_token(context: BrowserContext) -> str:
