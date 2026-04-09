@@ -98,10 +98,8 @@ class SensorTowerCollector(PlatformCollector):
         async with self.browser.session(self.state_key, headless=request.headless, use_cdp=use_cdp) as context:
             page = context.pages[0] if context.pages else await context.new_page()
             await self.browser.apply_stealth(page)
-            await page.goto(self.settings.sensortower_base_url, wait_until="domcontentloaded")
-            await page.wait_for_timeout(4_000)
 
-            # Session validation: check if we're still authenticated
+            # Session validation: navigate to base URL and check we're not redirected to login
             if not await self._validate_session(page):
                 return CollectorRunResult(
                     platform=self.platform,
@@ -207,21 +205,23 @@ class SensorTowerCollector(PlatformCollector):
         we get redirected to a login page or receive a 401/403.
         """
         try:
-            response = await page.request.get(
-                f"{self.settings.sensortower_base_url}/api/auth/me",
-                timeout=10_000,
+            # Navigate to the home page and check where we end up
+            response = await page.goto(
+                self.settings.sensortower_base_url,
+                wait_until="domcontentloaded",
+                timeout=15_000,
             )
-            if response.status in (401, 403):
-                logger.error("Session expired: got HTTP %d from auth check", response.status)
+            final_url = page.url
+            if "sign_in" in final_url or "login" in final_url or "signin" in final_url:
+                logger.error("Session expired: redirected to login page (%s)", final_url)
                 return False
-            # Check for login page redirect (URL changed to contain 'login' or 'signin')
-            if "login" in response.url.lower() or "signin" in response.url.lower():
-                logger.error("Session expired: redirected to login page (%s)", response.url)
+            status = response.status if response else 0
+            if status in (401, 403):
+                logger.error("Session expired: got HTTP %d", status)
                 return False
-            logger.info("Session validated (HTTP %d)", response.status)
+            logger.info("Session validated (landed on %s)", final_url)
             return True
         except Exception as exc:
-            # If the auth endpoint doesn't exist, assume session is OK and proceed
             logger.debug("Session validation inconclusive (%s), proceeding", exc)
             return True
 
@@ -847,8 +847,6 @@ class SensorTowerCollector(PlatformCollector):
         async with self.browser.session(self.state_key, headless=headless, use_cdp=use_cdp) as context:
             page = context.pages[0] if context.pages else await context.new_page()
             await self.browser.apply_stealth(page)
-            await page.goto(self.settings.sensortower_base_url, wait_until="domcontentloaded")
-            await page.wait_for_timeout(4_000)
 
             if not await self._validate_session(page):
                 logger.error("Session expired, cannot collect market data.")
