@@ -24,6 +24,7 @@ from adintel.platforms.sensortower_parsers import (
     parse_demographic_rows,
     parse_download_rows,
     parse_impression_share_rows,
+    parse_market_top_apps,
     parse_ranking_row,
     parse_review_rows,
     parse_review_text_rows,
@@ -813,3 +814,106 @@ class SensorTowerCollector(PlatformCollector):
         else:
             logger.warning("aso_keywords/%s: no matching API response", country)
         return total_written
+
+    async def collect_market_top_apps(
+        self,
+        *,
+        category_id: str,
+        country: str = "US",
+        networks: list[str] | None = None,
+        headless: bool = False,
+        use_cdp: bool = False,
+    ) -> int:
+        """Collect market-wide top apps rankings for a category.
+
+        Unlike per-advertiser collection, this does not require a specific advertiser.
+        It navigates to the SensorTower ad-intel top-apps page and saves ALL apps.
+        """
+        from adintel.platforms.sensortower_parsers import CATEGORY_NAMES
+
+        if networks is None:
+            networks = NETWORKS[:15]
+
+        category_name = CATEGORY_NAMES.get(category_id, category_id)
+        scrape_month = self._today().replace(day=1)
+        repository = SensorTowerRepository(self.session)
+        total_records = 0
+
+        logger.info(
+            "Starting market top apps collection: category=%s (%s), country=%s",
+            category_id, category_name, country,
+        )
+
+        async with self.browser.session(self.state_key, headless=headless, use_cdp=use_cdp) as context:
+            page = context.pages[0] if context.pages else await context.new_page()
+            await self.browser.apply_stealth(page)
+            await page.goto(self.settings.sensortower_base_url, wait_until="domcontentloaded")
+            await page.wait_for_timeout(4_000)
+
+            if not await self._validate_session(page):
+                logger.error("Session expired, cannot collect market data.")
+                return 0
+
+            url = self._build_url(
+                "/ad-intel/advertisers/top-apps",
+                {
+                    "os": "unified",
+                    "country": country,
+                    "category": category_id,
+                    "period": "month",
+                    "network": networks,
+                },
+            )
+
+            # Use direct page navigation with response capture (no advertiser context)
+            await self._jitter(page)
+            logger.debug("Navigating market top apps: %s", url[:120])
+            captured: list[dict] = []
+            tasks: list[asyncio.Task] = []
+
+            async def process_response(response) -> None:
+                if "/api/" not in response.url:
+                    return
+                try:
+                    data = await response.json()
+                except Exception:
+                    return
+                captured.append({"url": response.url, "data": data})
+
+            def handler(response) -> None:
+                tasks.append(asyncio.create_task(process_response(response)))
+
+            page.on("response", handler)
+            try:
+                try:
+                    await page.goto(url, wait_until="domcontentloaded", timeout=self.settings.collect_timeout_ms)
+                except Exception as exc:
+                    if "Timeout" not in str(exc):
+                        raise
+                    logger.debug("Navigation timeout for market-top-apps (non-fatal)")
+                await page.wait_for_timeout(8_000)
+                if tasks:
+                    await asyncio.gather(*tasks, return_exceptions=True)
+            finally:
+                page.remove_listener("response", handler)
+
+            for item in captured:
+                if "top_apps" not in item["url"] and "top-apps" not in item["url"]:
+                    continue
+                rows = parse_market_top_apps(
+                    item["data"],
+                    country=country,
+                    category=category_name,
+                    scrape_month=scrape_month,
+                )
+                if rows:
+                    total_records += repository.upsert_market_top_apps(rows)
+                    logger.info("market-top-apps/%s: %d apps saved", country, len(rows))
+                    break
+
+        if not total_records:
+            logger.warning("market-top-apps/%s: no data captured", country)
+        else:
+            logger.info("Market top apps collection complete: %d records", total_records)
+
+        return total_records

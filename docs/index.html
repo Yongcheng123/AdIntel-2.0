@@ -633,14 +633,16 @@
       <li><a href="#tools" class="toc-h2">Available Tools</a></li>
       <li><a href="#tool-list-advertisers" class="toc-h3">list_advertisers</a></li>
       <li><a href="#tool-get-summary" class="toc-h3">get_advertiser_summary</a></li>
-      <li><a href="#tool-compare" class="toc-h3">compare_advertisers</a></li>
+      <li><a href="#tool-full-comparison" class="toc-h3">get_full_comparison</a></li>
       <li><a href="#tool-timeseries" class="toc-h3">get_metric_timeseries</a></li>
+      <li><a href="#tool-market-top-apps" class="toc-h3">get_market_top_apps</a></li>
       <li><a href="#tool-health" class="toc-h3">get_collection_health</a></li>
       <li><a href="#tool-alerts" class="toc-h3">get_collection_alerts</a></li>
       <li><a href="#tool-runs" class="toc-h3">get_recent_collection_runs</a></li>
       <li><a href="#tool-request" class="toc-h3">request_advertiser</a></li>
       <li><a href="#tool-list-requested" class="toc-h3">list_requested_advertisers</a></li>
       <li><a href="#tool-schema" class="toc-h3">read_schema_text</a></li>
+      <li><a href="#tool-run-query" class="toc-h3">run_query</a></li>
       <li><a href="#samples" class="toc-h2">Sample Questions</a></li>
       <li><a href="#appendix-a" class="toc-h2">Appendix A: Data</a></li>
       <li><a href="#appendix-b" class="toc-h2">Appendix B: Advertisers</a></li>
@@ -682,11 +684,19 @@
         </div>
         <div class="capability-item">
           <span class="capability-icon">⚖️</span>
-          <div><strong>Compare advertisers</strong><span>Side-by-side latest metrics across 2+ apps</span></div>
+          <div><strong>Full competitive comparison</strong><span>30-day trends, SOV by network, and computed gap analysis for 2+ apps</span></div>
         </div>
         <div class="capability-item">
           <span class="capability-icon">📈</span>
           <div><strong>Explore historical trends</strong><span>Daily time-series up to 90 days per metric</span></div>
+        </div>
+        <div class="capability-item">
+          <span class="capability-icon">🏆</span>
+          <div><strong>Market-wide top apps</strong><span>Ranked list of all apps in a category with downloads, DAU, and ad network presence</span></div>
+        </div>
+        <div class="capability-item">
+          <span class="capability-icon">🔎</span>
+          <div><strong>Run custom SQL</strong><span>SELECT queries against the full AdIntel database — any table, any filter</span></div>
         </div>
         <div class="capability-item">
           <span class="capability-icon">🏥</span>
@@ -882,7 +892,7 @@ url = "https://adintel-delta.vercel.app/"</code></pre>
 
         <h4>Step 4 — Verify</h4>
         <p style="font-size:13px; color:var(--muted);">Ask Antigravity: <em>"What tools do you have access to?"</em><br>
-        You should see all AdIntel tools listed — <code>list_advertisers</code>, <code>get_advertiser_summary</code>, <code>compare_advertisers</code>, and more.</p>
+        You should see all AdIntel tools listed — <code>list_advertisers</code>, <code>get_advertiser_summary</code>, <code>get_full_comparison</code>, <code>run_query</code>, and more.</p>
       </div>
 
     </section>
@@ -902,7 +912,7 @@ url = "https://adintel-delta.vercel.app/"</code></pre>
             <thead><tr><th>Parameter</th><th>Type</th><th>Default</th><th>Description</th></tr></thead>
             <tbody><tr><td colspan="4" style="color:var(--muted); font-style:italic;">No parameters</td></tr></tbody>
           </table>
-          <div class="returns"><strong>Returns:</strong> Array of advertiser objects with name, category, countries, and Sensor Tower platform IDs.</div>
+          <div class="returns"><strong>Returns:</strong> Array of advertiser objects with name, category, countries, Sensor Tower platform IDs, and <code>data_freshness</code> (last successful scrape timestamp, download row count, and last GEO scrape for each advertiser).</div>
         </div>
       </div>
 
@@ -924,22 +934,21 @@ url = "https://adintel-delta.vercel.app/"</code></pre>
         </div>
       </div>
 
-      <!-- compare_advertisers -->
-      <div class="tool-card" id="tool-compare">
+      <!-- get_full_comparison -->
+      <div class="tool-card" id="tool-full-comparison">
         <div class="tool-header">
-          <span class="tool-name">compare_advertisers</span>
-          <span class="tool-desc">Latest single-metric snapshot across two or more advertisers side by side.</span>
+          <span class="tool-name">get_full_comparison</span>
+          <span class="tool-desc">Full competitive analysis across two or more advertisers — trends, SOV, and a computed gap analysis.</span>
         </div>
         <div class="tool-body">
           <table>
             <thead><tr><th>Parameter</th><th>Type</th><th>Default</th><th>Description</th></tr></thead>
             <tbody>
               <tr><td><code>advertiser_names</code></td><td>string</td><td><span class="required">required</span></td><td>Comma-separated names — e.g. <code>"Binance, Coinbase, Kraken"</code></td></tr>
-              <tr><td><code>metric</code></td><td>string</td><td><code>"downloads"</code></td><td>One of: <code>downloads</code>, <code>usage</code>, <code>retention</code>, <code>impression_share</code>, <code>rankings</code>, <code>reviews</code></td></tr>
               <tr><td><code>country</code></td><td>string</td><td><code>"US"</code></td><td>ISO country code</td></tr>
             </tbody>
           </table>
-          <div class="returns"><strong>Returns:</strong> Latest metric values per advertiser with date.</div>
+          <div class="returns"><strong>Returns:</strong> 30-day timeseries for downloads and DAU per advertiser, per-network SOV with trends, and a server-computed <code>gap_analysis</code> — exclusive networks, SOV ratios, efficiency indicators, and pre-written opportunity bullets.</div>
         </div>
       </div>
 
@@ -962,6 +971,27 @@ url = "https://adintel-delta.vercel.app/"</code></pre>
             </tbody>
           </table>
           <div class="returns"><strong>Returns:</strong> Chronological array of daily data points with date, country, and metric values.</div>
+        </div>
+      </div>
+
+      <!-- get_market_top_apps -->
+      <div class="tool-card" id="tool-market-top-apps">
+        <div class="tool-header">
+          <span class="tool-name">get_market_top_apps</span>
+          <span class="tool-desc">Market-wide ranked list of apps in a category — all apps, not just tracked ones.</span>
+        </div>
+        <div class="tool-body">
+          <table>
+            <thead><tr><th>Parameter</th><th>Type</th><th>Default</th><th>Description</th></tr></thead>
+            <tbody>
+              <tr><td><code>category</code></td><td>string</td><td><code>"Finance"</code></td><td>Category name (e.g. <code>"Finance"</code>, <code>"Games"</code>) or numeric ID (e.g. <code>"6015"</code>)</td></tr>
+              <tr><td><code>country</code></td><td>string</td><td><code>"US"</code></td><td>ISO country code</td></tr>
+              <tr><td><code>sort_by</code></td><td>string</td><td><code>"rank"</code></td><td>One of: <code>rank</code>, <code>downloads</code>, <code>revenue</code>, <code>dau</code>, <code>impression_share</code></td></tr>
+              <tr><td><code>limit</code></td><td>integer</td><td><code>25</code></td><td>Max apps to return (max 100)</td></tr>
+              <tr><td><code>scrape_month</code></td><td>string</td><td><code>null</code></td><td>Filter to a specific month — <code>YYYY-MM-DD</code> (defaults to latest)</td></tr>
+            </tbody>
+          </table>
+          <div class="returns"><strong>Returns:</strong> Ranked list of apps with <code>app_name</code>, <code>publisher_name</code>, <code>downloads</code>, <code>revenue</code>, <code>dau</code>, <code>impression_share</code>, and boolean ad-network presence flags (AdMob, Facebook, TikTok, YouTube, AppLovin, Unity, Mintegral, Snapchat, Instagram).</div>
         </div>
       </div>
 
@@ -1067,6 +1097,23 @@ url = "https://adintel-delta.vercel.app/"</code></pre>
           <div class="returns"><strong>Returns:</strong> Raw SQL schema text — useful for understanding table structures or writing custom queries.</div>
         </div>
       </div>
+
+      <!-- run_query -->
+      <div class="tool-card" id="tool-run-query">
+        <div class="tool-header">
+          <span class="tool-name">run_query</span>
+          <span class="tool-desc">Execute a read-only SELECT query against the AdIntel database.</span>
+        </div>
+        <div class="tool-body">
+          <table>
+            <thead><tr><th>Parameter</th><th>Type</th><th>Default</th><th>Description</th></tr></thead>
+            <tbody>
+              <tr><td><code>sql</code></td><td>string</td><td><span class="required">required</span></td><td>A <code>SELECT</code> or <code>WITH</code> statement — any table, any filter, any join</td></tr>
+            </tbody>
+          </table>
+          <div class="returns"><strong>Returns:</strong> <code>{"columns": [...], "rows": [...], "row_count": N, "truncated": bool}</code>. Results capped at 100 rows. Only SELECT/WITH are allowed — write operations are rejected.</div>
+        </div>
+      </div>
     </section>
 
     <!-- Sample Questions -->
@@ -1084,6 +1131,18 @@ url = "https://adintel-delta.vercel.app/"</code></pre>
         <div class="question-card">"Compare MonopolyGo and ScrabbleGo. Pull 30-day download trends, DAU, revenue, and ad impression share for each. Which ad networks does MonopolyGo run on that ScrabbleGo doesn't? Where is the biggest gap in coverage?"</div>
         <div class="question-card">"For Binance, Coinbase, and Kraken in the US, compare the latest downloads and usage. Tell me which looks strongest, show the 30-day trend, and flag any data health issues."</div>
         <div class="question-card">"Which finance apps in AdIntel have the highest impression share on TikTok? Which ones have zero presence there — and what does that mean for their UA strategy?"</div>
+      </div>
+
+      <div class="question-group">
+        <h3>Market Intelligence</h3>
+        <div class="question-card">"Show me the top 20 Finance apps in the US by downloads this month. Which ones are running TikTok ads? Which ones aren't in our AdIntel catalog yet?"</div>
+        <div class="question-card">"Who are the top Games apps by impression share in the US? Compare their ad network mix."</div>
+      </div>
+
+      <div class="question-group">
+        <h3>Custom Queries</h3>
+        <div class="question-card">"Run a SQL query to find the top 10 advertisers by total downloads in the US over the last 30 days."</div>
+        <div class="question-card">"Query the database to find which ad networks Chime has used in the last 90 days and their average SOV."</div>
       </div>
 
       <div class="question-group">
@@ -1158,13 +1217,19 @@ url = "https://adintel-delta.vercel.app/"</code></pre>
               <td><code>rank</code>, <code>traffic_score</code>, <code>opportunity_score</code></td>
               <td>country, device</td>
             </tr>
+            <tr>
+              <td><strong>Market Top Apps</strong></td>
+              <td><code>rank</code>, <code>downloads</code>, <code>revenue</code>, <code>dau</code>, <code>impression_share</code>, ad-network flags</td>
+              <td>scrape month, country, category, OS</td>
+            </tr>
           </tbody>
         </table>
       </div>
 
       <p style="font-size:13px; color: var(--muted);">
-        <strong>Tool coverage:</strong> <code>get_metric_timeseries</code> and <code>compare_advertisers</code> support: <code>downloads</code>, <code>usage</code>, <code>retention</code>, <code>impression_share</code>, <code>rankings</code>, <code>reviews</code>.<br>
-        <code>get_advertiser_summary</code> surfaces all domains for one advertiser at once.<br>
+        <strong>Tool coverage:</strong> <code>get_metric_timeseries</code> supports: <code>downloads</code>, <code>usage</code>, <code>retention</code>, <code>impression_share</code>, <code>rankings</code>, <code>reviews</code>.<br>
+        <code>get_advertiser_summary</code> surfaces all per-advertiser domains at once. <code>get_full_comparison</code> adds computed gap analysis across 2+ advertisers.<br>
+        <code>get_market_top_apps</code> covers all apps in a category (not just tracked ones). <code>run_query</code> gives direct SQL access to every table.<br>
         Most advertisers tracked in <strong>US</strong> only. Binance is also tracked in <strong>TR, BR, NG</strong>.<br>
         Coverage varies by advertiser — check <code>get_collection_health</code> if results look sparse.
       </p>
@@ -1221,10 +1286,11 @@ url = "https://adintel-delta.vercel.app/"</code></pre>
     <section class="section">
       <h2>Notes for Teammates</h2>
       <ul>
-        <li>Use advertiser names <strong>exactly as they appear</strong> in the catalog — matching is case-sensitive</li>
+        <li>Advertiser name matching is <strong>fuzzy</strong> — "chime" and "Chme" both resolve to "Chime" automatically. If a typo is ambiguous, the server will return a suggestions list instead of guessing</li>
         <li>If an advertiser is missing, use <code>request_advertiser</code> to keep the onboarding queue visible to the whole team</li>
         <li>If results look empty or sparse, check <code>get_collection_health</code> before assuming there's no data — the advertiser may have a recent collection failure</li>
         <li>The MCP is read-only — it reflects what is already in the shared database</li>
+        <li>Use <code>run_query</code> + <code>read_schema_text</code> together for ad-hoc analysis not covered by the built-in tools</li>
       </ul>
     </section>
 

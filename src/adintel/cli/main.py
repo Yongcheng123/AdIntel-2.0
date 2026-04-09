@@ -254,6 +254,49 @@ def collect_advertiser(
         typer.echo(f"{result.platform}: {result.status} | {result.message}")
 
 
+@collect_app.command("market-top-apps")
+def collect_market_top_apps(
+    category: str = typer.Option("6015", help="Category ID (e.g. '6015' for Finance) or name."),
+    country: str = typer.Option("US", help="Country code."),
+    headless: bool = typer.Option(False, help="Run browser headlessly."),
+    use_cdp: bool = typer.Option(False, help="Connect to an existing browser over CDP."),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable verbose logging (DEBUG level)."),
+) -> None:
+    """Collect market-wide top apps rankings from SensorTower for a category."""
+    from adintel.platforms.sensortower import SensorTowerCollector
+    from adintel.platforms.sensortower_parsers import CATEGORY_NAMES
+
+    _setup_logging(verbose)
+    settings = get_settings()
+
+    # Resolve category name to ID if needed
+    category_id = category
+    reverse = {v.lower(): k for k, v in CATEGORY_NAMES.items()}
+    if category.lower() in reverse:
+        category_id = reverse[category.lower()]
+    elif category not in CATEGORY_NAMES:
+        typer.echo(f"Warning: '{category}' not in known categories, using as-is.")
+
+    with _session_factory()() as session:
+        from adintel.core.browser import BrowserManager
+        collector = SensorTowerCollector(
+            settings=settings,
+            session=session,
+            browser=BrowserManager(settings),
+        )
+        total = asyncio.run(
+            collector.collect_market_top_apps(
+                category_id=category_id,
+                country=country.upper(),
+                headless=headless,
+                use_cdp=use_cdp,
+            )
+        )
+
+    category_label = CATEGORY_NAMES.get(category_id, category_id)
+    typer.echo(f"Market top apps ({category_label}/{country}): {total} records saved.")
+
+
 @collect_app.command("stale")
 def collect_stale(
     platform: str = typer.Option("sensortower", help="Platform name."),

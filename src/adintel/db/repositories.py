@@ -22,6 +22,7 @@ from adintel.db.models import (
     SensorTowerRankingRecord,
     SensorTowerReviewRecord,
     SensorTowerReviewTextRecord,
+    SensorTowerMarketTopAppRecord,
     SensorTowerRetentionRecord,
     SensorTowerUsageRecord,
 )
@@ -65,7 +66,11 @@ class AdvertiserRepository:
         return _to_profile(row)
 
     def resolve(self, query: str) -> AdvertiserProfile | None:
-        """Fuzzy lookup: exact name → case-insensitive name → domain match → substring match."""
+        """Fuzzy lookup: exact → case-insensitive → substring → single high-confidence fuzzy match.
+
+        When fuzzy auto-resolution is used (step 4), the returned profile will have
+        ``_resolved_from`` set to the original query string so callers can surface it.
+        """
         # 1. Exact match
         row = self.session.scalar(
             select(AdvertiserRecord).where(AdvertiserRecord.name == query)
@@ -85,7 +90,10 @@ class AdvertiserRepository:
             )
         )
         if row:
-            return _to_profile(row)
+            profile = _to_profile(row)
+            if query != row.name:
+                profile._resolved_from = query  # type: ignore[attr-defined]
+            return profile
 
         # 3. Substring match on name or domain (e.g. "pokemon go" ⊂ "pokemongolive.com")
         slug = q.replace(" ", "").replace("-", "").replace("_", "")
@@ -93,8 +101,21 @@ class AdvertiserRepository:
         for r in rows:
             name_slug = (r.name or "").lower().replace(" ", "").replace("-", "").replace("_", "").replace(".", "")
             domain_slug = (r.domain or "").lower().replace(" ", "").replace("-", "").replace("_", "").replace(".", "")
-            if slug in name_slug or slug in domain_slug or name_slug in slug or domain_slug in slug:
+            name_matches = slug in name_slug or (name_slug and name_slug in slug)
+            domain_matches = slug in domain_slug or (domain_slug and domain_slug in slug)
+            if name_matches or domain_matches:
                 return _to_profile(r)
+
+        # 4. Single high-confidence fuzzy match (typo correction)
+        candidates = self.suggest(query, limit=2, threshold=0.7)
+        if len(candidates) == 1:
+            row = self.session.scalar(
+                select(AdvertiserRecord).where(AdvertiserRecord.name == candidates[0])
+            )
+            if row:
+                profile = _to_profile(row)
+                profile._resolved_from = query  # type: ignore[attr-defined]
+                return profile
 
         return None
 
@@ -535,6 +556,14 @@ class SensorTowerRepository:
             SensorTowerAsoKeywordRecord,
             rows,
             conflict_columns=["advertiser_name", "keyword", "country", "device"],
+        )
+
+    def upsert_market_top_apps(self, rows: list[dict]) -> int:
+        return _bulk_upsert(
+            self.session,
+            SensorTowerMarketTopAppRecord,
+            rows,
+            conflict_columns=["scrape_month", "country", "category", "os", "rank"],
         )
 
 

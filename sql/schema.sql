@@ -260,6 +260,37 @@ CREATE INDEX IF NOT EXISTS idx_otterlyai_citations_target ON otterlyai_citations
 CREATE INDEX IF NOT EXISTS idx_otterlyai_citations_country ON otterlyai_citations(country_code);
 CREATE INDEX IF NOT EXISTS idx_otterlyai_citations_engine ON otterlyai_citations(ai_engine);
 
+CREATE TABLE IF NOT EXISTS sensortower_market_top_apps (
+  id SERIAL PRIMARY KEY,
+  scrape_month DATE NOT NULL,
+  country VARCHAR(8) NOT NULL DEFAULT 'US',
+  category VARCHAR(255) NOT NULL,
+  os VARCHAR(32) NOT NULL DEFAULT 'unified',
+  rank INTEGER NOT NULL,
+  app_name VARCHAR(255),
+  publisher_name VARCHAR(255),
+  unified_app_id VARCHAR(255),
+  primary_category VARCHAR(255),
+  downloads BIGINT,
+  revenue NUMERIC,
+  dau BIGINT,
+  impression_share DOUBLE PRECISION,
+  ad_on_admob BOOLEAN DEFAULT FALSE,
+  ad_on_facebook BOOLEAN DEFAULT FALSE,
+  ad_on_instagram BOOLEAN DEFAULT FALSE,
+  ad_on_tiktok BOOLEAN DEFAULT FALSE,
+  ad_on_youtube BOOLEAN DEFAULT FALSE,
+  ad_on_snapchat BOOLEAN DEFAULT FALSE,
+  ad_on_applovin BOOLEAN DEFAULT FALSE,
+  ad_on_unity BOOLEAN DEFAULT FALSE,
+  ad_on_mintegral BOOLEAN DEFAULT FALSE,
+  scraped_at TIMESTAMPTZ DEFAULT now(),
+  CONSTRAINT uq_sensortower_market_top_apps UNIQUE (scrape_month, country, category, os, rank)
+);
+
+CREATE INDEX IF NOT EXISTS idx_st_market_top_apps_month ON sensortower_market_top_apps(scrape_month);
+CREATE INDEX IF NOT EXISTS idx_st_market_top_apps_category ON sensortower_market_top_apps(category);
+
 -- Additive migrations for existing databases
 --
 -- When you add a new column to an existing table, append the matching ALTER

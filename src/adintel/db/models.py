@@ -252,6 +252,41 @@ class SensorTowerAsoKeywordRecord(Base):
     scraped_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
 
 
+class SensorTowerMarketTopAppRecord(Base):
+    __tablename__ = "sensortower_market_top_apps"
+    __table_args__ = (
+        UniqueConstraint(
+            "scrape_month", "country", "category", "os", "rank",
+            name="uq_sensortower_market_top_apps",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    scrape_month: Mapped[date] = mapped_column(Date)
+    country: Mapped[str] = mapped_column(String(8), default="US")
+    category: Mapped[str] = mapped_column(String(255))
+    os: Mapped[str] = mapped_column(String(32), default="unified")
+    rank: Mapped[int] = mapped_column(Integer)
+    app_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    publisher_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    unified_app_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    primary_category: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    downloads: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    revenue: Mapped[float | None] = mapped_column(Numeric, nullable=True)
+    dau: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    impression_share: Mapped[float | None] = mapped_column(Float, nullable=True)
+    ad_on_admob: Mapped[bool] = mapped_column(Boolean, default=False)
+    ad_on_facebook: Mapped[bool] = mapped_column(Boolean, default=False)
+    ad_on_instagram: Mapped[bool] = mapped_column(Boolean, default=False)
+    ad_on_tiktok: Mapped[bool] = mapped_column(Boolean, default=False)
+    ad_on_youtube: Mapped[bool] = mapped_column(Boolean, default=False)
+    ad_on_snapchat: Mapped[bool] = mapped_column(Boolean, default=False)
+    ad_on_applovin: Mapped[bool] = mapped_column(Boolean, default=False)
+    ad_on_unity: Mapped[bool] = mapped_column(Boolean, default=False)
+    ad_on_mintegral: Mapped[bool] = mapped_column(Boolean, default=False)
+    scraped_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
+
+
 class OtterlyPromptRecord(Base):
     __tablename__ = "otterlyai_prompts"
     __table_args__ = (

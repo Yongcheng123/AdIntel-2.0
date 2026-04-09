@@ -283,6 +283,51 @@ def parse_ranking_row(
     return None
 
 
+def parse_market_top_apps(
+    data: dict,
+    country: str,
+    category: str,
+    scrape_month: date,
+    os: str = "unified",
+) -> list[dict]:
+    """Extract ALL apps from the top-apps API response (not just a single target).
+
+    The response shape is ``{"apps": [{"app_id": ..., "name": ..., ...}, ...]}``.
+    Each app's index in the array is its rank.
+    """
+    apps = normalize_array(data)
+    rows: list[dict] = []
+    for index, app in enumerate(apps):
+        # Network ad flags — field names vary: "network_name", "ad_networks", or boolean flags
+        ad_networks = {n.lower() for n in (app.get("ad_networks") or app.get("networks") or [])}
+
+        rows.append({
+            "scrape_month": scrape_month,
+            "country": country,
+            "category": category,
+            "os": os,
+            "rank": index + 1,
+            "app_name": app.get("name") or app.get("app_name") or app.get("appName"),
+            "publisher_name": app.get("publisher_name") or app.get("publisherName") or app.get("publisher"),
+            "unified_app_id": str(app.get("app_id") or app.get("id") or app.get("unified_app_id") or ""),
+            "primary_category": app.get("primary_category") or app.get("category") or app.get("primaryCategory"),
+            "downloads": app.get("downloads") or app.get("units"),
+            "revenue": app.get("revenue"),
+            "dau": app.get("dau") or app.get("avg_dau") or app.get("daily_active_users"),
+            "impression_share": app.get("impression_share") or app.get("sov") or app.get("share_of_voice"),
+            "ad_on_admob": "admob" in ad_networks or bool(app.get("ad_on_admob")),
+            "ad_on_facebook": "facebook" in ad_networks or bool(app.get("ad_on_facebook")),
+            "ad_on_instagram": "instagram" in ad_networks or bool(app.get("ad_on_instagram")),
+            "ad_on_tiktok": "tiktok" in ad_networks or bool(app.get("ad_on_tiktok")),
+            "ad_on_youtube": "youtube" in ad_networks or bool(app.get("ad_on_youtube")),
+            "ad_on_snapchat": "snapchat" in ad_networks or bool(app.get("ad_on_snapchat")),
+            "ad_on_applovin": "applovin" in ad_networks or bool(app.get("ad_on_applovin")),
+            "ad_on_unity": "unity" in ad_networks or bool(app.get("ad_on_unity")),
+            "ad_on_mintegral": "mintegral" in ad_networks or bool(app.get("ad_on_mintegral")),
+        })
+    return rows
+
+
 def parse_review_rows(data: dict, advertiser_name: str, country: str) -> list[dict]:
     by_date: dict[date, dict] = {}
     for item in data.get("data") or []:

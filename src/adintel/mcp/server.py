@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 
 from mcp.server.fastmcp import FastMCP
@@ -136,6 +136,14 @@ def _build_timeseries(session, advertiser_name: str, metric: str, country: str, 
     return points
 
 
+def _resolved_info(advertiser) -> dict:
+    """Return resolution metadata if fuzzy auto-resolve was used."""
+    resolved_from = getattr(advertiser, "_resolved_from", None)
+    if resolved_from:
+        return {"resolved_from": resolved_from, "resolved_to": advertiser.name}
+    return {}
+
+
 def _build_summary(advertiser_name: str, country: str | None = None) -> dict:
     with _session_factory()() as session:
         advertisers = AdvertiserRepository(session)
@@ -211,6 +219,7 @@ def _build_summary(advertiser_name: str, country: str | None = None) -> dict:
 
     return {
         "found": True,
+        **_resolved_info(advertiser),
         "advertiser": advertiser.model_dump(),
         "sensortower": {
             "latest_download": (
@@ -339,16 +348,43 @@ def create_mcp_server() -> FastMCP:
         instructions=(
             "AdIntel provides competitive intelligence for mobile advertisers via SensorTower "
             "and GEO (Generative Engine Optimization) analysis via Otterly.AI.\n\n"
-            "WORKFLOW:\n"
+            "DATA COLLECTED FROM SENSORTOWER (per tracked advertiser):\n"
+            "- Downloads & revenue: daily timeseries, up to 90 days, by country and OS.\n"
+            "- DAU, time spent, sessions per day: daily engagement metrics.\n"
+            "- Retention cohorts: D1/D3/D7/D14/D30/D60 by month.\n"
+            "- Impression share (Share of Voice): per ad network (23 networks), daily.\n"
+            "- Demographics: age brackets (18-24, 25-34, 35-44, 45-54, 55+) with male/female %.\n"
+            "- Rankings: monthly position in category chart by ad SOV.\n"
+            "- Reviews: daily aggregate ratings and individual review text with sentiment.\n"
+            "- Ad creatives: type, network, thumbnail URL, duration bucket, first seen date.\n"
+            "- ASO keywords: rank, traffic score, opportunity score per device and country.\n"
+            "- Market-wide top apps: category rankings with downloads, revenue, DAU, and "
+            "per-network ad presence flags for ALL apps (not just tracked ones). "
+            "Populated by running 'adintel collect market-top-apps'.\n\n"
+            "DATA COLLECTED FROM OTTERLY.AI (GEO):\n"
+            "- AI search visibility: citation rate per prompt across ChatGPT, Perplexity, "
+            "Google AI Overview, Google Gemini, Microsoft Copilot.\n"
+            "- Prompt-level data: volume, brand rank, sentiment, competitor overlap.\n"
+            "- Citation data: cited URLs and domains, brand vs third-party, domain category.\n\n"
+            "ADVERTISER NAME RESOLUTION:\n"
+            "- Names are fuzzy-matched: 'chime', 'Chme', or 'chim' all resolve to 'Chime'.\n"
+            "- When auto-resolved, the response includes resolved_from and resolved_to fields.\n"
+            "- Use list_advertisers to see all tracked advertisers with data freshness metadata.\n\n"
+            "SENSORTOWER WORKFLOW:\n"
             "- Competitive comparison (2+ advertisers) → call get_full_comparison.\n"
-            "  Returns 30-day timeseries for downloads and DAU, per-network ad placement with SOV trends,\n"
-            "  AND a server-computed gap_analysis showing exclusive networks, SOV ratios, efficiency\n"
-            "  indicators, and pre-written opportunity bullets. Use this instead of compare_advertisers\n"
-            "  for any analysis task.\n\n"
+            "  Returns 30-day timeseries for downloads and DAU, per-network SOV trends,\n"
+            "  and a server-computed gap_analysis (exclusive networks, SOV ratios, efficiency,\n"
+            "  opportunity bullets).\n\n"
             "- Single advertiser deep dive → call get_advertiser_summary.\n"
             "  Returns all latest data: demographics, reviews, creatives, ASO keywords.\n\n"
             "- Custom date range or individual metric → use get_metric_timeseries.\n"
             "  Metrics: downloads, usage, retention, impression_share, rankings, reviews.\n\n"
+            "- Market-wide category rankings → call get_market_top_apps.\n"
+            "  Sort by: downloads, revenue, dau, impression_share, rank.\n"
+            "  Filter by network presence (e.g. only apps advertising on TikTok).\n\n"
+            "- Custom analysis → call run_query with a SELECT statement.\n"
+            "  Call read_schema_text first to understand available tables and columns.\n"
+            "  Limited to 100 rows; read-only (SELECT/WITH only).\n\n"
             "GEO (AI SEARCH VISIBILITY) WORKFLOW:\n"
             "- Single brand AI visibility → call get_geo_visibility_summary.\n"
             "  Shows visibility rate, engine breakdown, sentiment, top cited domains.\n\n"
@@ -358,6 +394,10 @@ def create_mcp_server() -> FastMCP:
             "  Shows which URLs/domains get cited, brand vs third-party split, categories.\n\n"
             "- Prompt/query analysis → call get_geo_prompt_insights.\n"
             "  Shows top queries, ranking, blind-spot prompts where competitors win.\n\n"
+            "COLLECTION HEALTH:\n"
+            "- get_collection_health / get_collection_alerts: check data freshness and failures.\n"
+            "- get_recent_collection_runs: inspect per-metric outcomes of past scrape runs.\n"
+            "- list_advertisers: shows st_last_scraped, st_download_rows, geo_last_scraped per brand.\n\n"
             "COMPETITIVE GAP ANALYSIS REPORT FORMAT:\n"
             "1. Executive summary (who leads, by how much)\n"
             "2. Side-by-side metrics table (downloads, DAU, revenue, total SOV)\n"
@@ -391,15 +431,80 @@ def create_mcp_server() -> FastMCP:
 
     @server.tool(
         name="list_advertisers",
-        description="List advertisers currently stored in AdIntel.",
+        description=(
+            "List advertisers currently stored in AdIntel with data freshness metadata "
+            "(last scraped timestamps and row counts)."
+        ),
     )
     def list_advertisers() -> str:
+        from adintel.db.models import AdvertiserRecord, ScrapeRunRecord
+
         with _session_factory()() as session:
             advertisers = AdvertiserRepository(session).list()
-        return json.dumps(
-            {"advertisers": [advertiser.model_dump() for advertiser in advertisers]},
-            indent=2,
-        )
+
+            # SensorTower freshness: latest successful run per advertiser
+            st_freshness_q = (
+                select(
+                    ScrapeRunRecord.advertiser_name,
+                    func.max(ScrapeRunRecord.finished_at).label("last_scraped"),
+                    func.count().label("total_runs"),
+                )
+                .where(ScrapeRunRecord.platform == "sensortower")
+                .where(ScrapeRunRecord.status.in_(["success", "partial"]))
+                .group_by(ScrapeRunRecord.advertiser_name)
+            )
+            st_freshness = {
+                row.advertiser_name: {
+                    "last_scraped": row.last_scraped.isoformat() if row.last_scraped else None,
+                    "total_runs": row.total_runs,
+                }
+                for row in session.execute(st_freshness_q).all()
+            }
+
+            # Download row counts per advertiser
+            dl_counts_q = (
+                select(
+                    SensorTowerDownloadRecord.advertiser_name,
+                    func.count().label("row_count"),
+                )
+                .group_by(SensorTowerDownloadRecord.advertiser_name)
+            )
+            dl_counts = {
+                row.advertiser_name: row.row_count
+                for row in session.execute(dl_counts_q).all()
+            }
+
+            # GEO freshness: latest scraped_at from otterly prompts per target
+            geo_freshness_q = (
+                select(
+                    OtterlyPromptRecord.target_brand_or_domain_name,
+                    func.max(OtterlyPromptRecord.scraped_at).label("last_scraped"),
+                )
+                .group_by(OtterlyPromptRecord.target_brand_or_domain_name)
+            )
+            geo_freshness = {
+                row.target_brand_or_domain_name: row.last_scraped.isoformat() if row.last_scraped else None
+                for row in session.execute(geo_freshness_q).all()
+            }
+
+        result = []
+        for adv in advertisers:
+            d = adv.model_dump()
+            name = adv.name
+            domain = adv.domain
+
+            st = st_freshness.get(name, {})
+            geo_last = geo_freshness.get(domain) if domain else geo_freshness.get(name)
+
+            d["data_freshness"] = {
+                "st_last_scraped": st.get("last_scraped"),
+                "st_total_runs": st.get("total_runs", 0),
+                "st_download_rows": dl_counts.get(name, 0),
+                "geo_last_scraped": geo_last,
+            }
+            result.append(d)
+
+        return json.dumps({"advertisers": result}, indent=2)
 
     @server.tool(
         name="get_advertiser_summary",
@@ -456,6 +561,60 @@ def create_mcp_server() -> FastMCP:
     )
     def read_schema_text() -> str:
         return _schema_text()
+
+    @server.tool(
+        name="run_query",
+        description=(
+            "Execute a read-only SQL query against the AdIntel database. "
+            "Only SELECT statements are allowed. Read schema://adintel first to understand the table structure. "
+            "Returns up to 100 rows."
+        ),
+    )
+    def run_query(sql: str) -> str:
+        import re
+        from sqlalchemy import text
+
+        stripped = sql.strip()
+        upper = stripped.upper()
+
+        # Must start with SELECT or WITH (CTE)
+        if not (upper.startswith("SELECT") or upper.startswith("WITH")):
+            return json.dumps({"error": "Only SELECT queries are allowed."})
+
+        # Reject DML/DDL keywords as standalone words
+        forbidden = r"\b(INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|TRUNCATE|GRANT|REVOKE)\b"
+        if re.search(forbidden, upper):
+            return json.dumps({"error": "Only SELECT queries are allowed. Detected forbidden keyword."})
+
+        max_rows = 100
+        try:
+            with _session_factory()() as session:
+                conn = session.connection()
+                conn.execute(text("SET TRANSACTION READ ONLY"))
+                result = conn.execute(text(stripped))
+                columns = list(result.keys())
+                rows = []
+                truncated = False
+                for i, row in enumerate(result):
+                    if i >= max_rows:
+                        truncated = True
+                        break
+                    rows.append({
+                        col: (
+                            _to_float(val) if isinstance(val, Decimal) else
+                            val.isoformat() if isinstance(val, (date, datetime)) else
+                            val
+                        )
+                        for col, val in zip(columns, row)
+                    })
+                return json.dumps({
+                    "columns": columns,
+                    "rows": rows,
+                    "row_count": len(rows),
+                    "truncated": truncated,
+                }, indent=2)
+        except Exception as exc:
+            return json.dumps({"error": str(exc)})
 
     @server.tool(
         name="get_collection_health",
@@ -586,73 +745,12 @@ def create_mcp_server() -> FastMCP:
             data_points.append(point)
 
         return json.dumps({
+            **_resolved_info(resolved),
             "advertiser_name": canonical_name,
             "metric": metric,
             "country": country,
             "count": len(data_points),
             "data": data_points,
-        }, indent=2)
-
-    @server.tool(
-        name="compare_advertisers",
-        description=(
-            "Quick single-metric snapshot for two or more advertisers side by side. "
-            "For full competitive analysis with 30-day trends and ad placement gap analysis, "
-            "use get_full_comparison instead."
-        ),
-    )
-    def compare_advertisers(
-        advertiser_names: str,
-        metric: str = "downloads",
-        country: str = "US",
-    ) -> str:
-        names = [n.strip() for n in advertiser_names.split(",") if n.strip()]
-        if metric not in _METRIC_MAP:
-            return json.dumps({
-                "error": f"Unknown metric '{metric}'. Available: {', '.join(_METRIC_MAP.keys())}",
-            })
-
-        model, date_col_name, value_cols = _METRIC_MAP[metric]
-        date_col = getattr(model, date_col_name)
-        results = {}
-
-        with _session_factory()() as session:
-            for name in names:
-                repo = AdvertiserRepository(session)
-                advertiser = repo.resolve(name)
-                if advertiser is None:
-                    suggestions = repo.suggest(name)
-                    results[name] = {
-                        "found": False,
-                        "did_you_mean": suggestions,
-                        "message": (
-                            f"No advertiser found for '{name}'. Did you mean: "
-                            + ", ".join(f"'{s}'" for s in suggestions) + "?"
-                        ) if suggestions else f"No advertiser found for '{name}'.",
-                    }
-                    continue
-                canonical = advertiser.name
-                q = (
-                    select(model)
-                    .where(model.advertiser_name == canonical)
-                )
-                if hasattr(model, "country"):
-                    q = q.where(model.country == country)
-
-                row = session.scalar(q.order_by(desc(date_col)))
-                if row is None:
-                    results[canonical] = None
-                    continue
-
-                point = {"date": getattr(row, date_col_name).isoformat()}
-                for col in value_cols:
-                    point[col] = _to_float(getattr(row, col, None))
-                results[canonical] = point
-
-        return json.dumps({
-            "metric": metric,
-            "country": country,
-            "comparison": results,
         }, indent=2)
 
     @server.tool(
@@ -759,6 +857,7 @@ def create_mcp_server() -> FastMCP:
 
                 advertiser_data[canonical_name] = {
                     "found": True,
+                    **_resolved_info(advertiser),
                     "snapshot": snapshot,
                     "timeseries": {
                         "downloads": dl_series,
@@ -856,6 +955,105 @@ def create_mcp_server() -> FastMCP:
             },
             indent=2,
         )
+
+    # ── Market-wide tools ──────────────────────────────────────────────
+
+    @server.tool(
+        name="get_market_top_apps",
+        description=(
+            "Get market-wide app rankings from SensorTower. "
+            "Returns top apps by downloads, revenue, DAU, or impression share. "
+            "Use this for questions like 'which apps have the most downloads?' or 'top Finance apps by DAU'."
+        ),
+    )
+    def get_market_top_apps(
+        category: str = "Finance",
+        country: str = "US",
+        sort_by: str = "downloads",
+        limit: int = 20,
+        scrape_month: str | None = None,
+    ) -> str:
+        from adintel.db.models import SensorTowerMarketTopAppRecord
+        from adintel.platforms.sensortower_parsers import CATEGORY_NAMES
+
+        valid_sort = {"downloads", "revenue", "dau", "impression_share", "rank"}
+        if sort_by not in valid_sort:
+            return json.dumps({"error": f"Invalid sort_by. Options: {', '.join(sorted(valid_sort))}"})
+
+        # Resolve category name to ID or use as-is
+        reverse = {v.lower(): k for k, v in CATEGORY_NAMES.items()}
+        category_name = category
+        if category.lower() in reverse:
+            category_name = CATEGORY_NAMES[reverse[category.lower()]]
+        elif category in CATEGORY_NAMES:
+            category_name = CATEGORY_NAMES[category]
+
+        limit = max(1, min(limit, 100))
+
+        with _session_factory()() as session:
+            q = select(SensorTowerMarketTopAppRecord).where(
+                SensorTowerMarketTopAppRecord.country == country,
+            )
+
+            # Match category flexibly (exact or case-insensitive)
+            q = q.where(
+                SensorTowerMarketTopAppRecord.category.ilike(category_name)
+            )
+
+            if scrape_month:
+                q = q.where(SensorTowerMarketTopAppRecord.scrape_month == date.fromisoformat(scrape_month))
+            else:
+                # Latest available month
+                latest = session.scalar(
+                    select(func.max(SensorTowerMarketTopAppRecord.scrape_month))
+                    .where(SensorTowerMarketTopAppRecord.country == country)
+                    .where(SensorTowerMarketTopAppRecord.category.ilike(category_name))
+                )
+                if latest is None:
+                    return json.dumps({
+                        "error": f"No market data found for category='{category}', country='{country}'.",
+                        "hint": "Run 'adintel collect market-top-apps' to collect market data first.",
+                    })
+                q = q.where(SensorTowerMarketTopAppRecord.scrape_month == latest)
+
+            # Sort
+            sort_col = getattr(SensorTowerMarketTopAppRecord, sort_by)
+            if sort_by == "rank":
+                q = q.order_by(sort_col.asc())
+            else:
+                q = q.order_by(sort_col.desc().nulls_last())
+
+            rows = session.scalars(q.limit(limit)).all()
+
+        results = []
+        for row in rows:
+            results.append({
+                "rank": row.rank,
+                "app_name": row.app_name,
+                "publisher_name": row.publisher_name,
+                "unified_app_id": row.unified_app_id,
+                "primary_category": row.primary_category,
+                "downloads": row.downloads,
+                "revenue": _to_float(row.revenue),
+                "dau": row.dau,
+                "impression_share": _to_float(row.impression_share),
+                "ad_on_admob": row.ad_on_admob,
+                "ad_on_facebook": row.ad_on_facebook,
+                "ad_on_tiktok": row.ad_on_tiktok,
+                "ad_on_youtube": row.ad_on_youtube,
+                "ad_on_applovin": row.ad_on_applovin,
+                "ad_on_unity": row.ad_on_unity,
+                "scrape_month": row.scrape_month.isoformat(),
+                "country": row.country,
+            })
+
+        return json.dumps({
+            "category": category_name,
+            "country": country,
+            "sort_by": sort_by,
+            "count": len(results),
+            "data": results,
+        }, indent=2)
 
     # ── GEO (Generative Engine Optimization) Analysis Tools ─────────────
 

@@ -6,7 +6,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 import adintel.mcp.server as mcp_server
-from adintel.db.models import Base, ScrapeRunRecord, SensorTowerDownloadRecord
+from adintel.db.models import AdvertiserRecord, Base, ScrapeRunRecord, SensorTowerDownloadRecord
 from adintel.mcp.server import create_mcp_server
 
 
@@ -19,16 +19,18 @@ def test_mcp_server_registers_expected_tools() -> None:
         "request_advertiser",
         "list_requested_advertisers",
         "read_schema_text",
+        "run_query",
         "get_collection_health",
         "get_collection_alerts",
         "get_recent_collection_runs",
         "get_metric_timeseries",
-        "compare_advertisers",
         "get_full_comparison",
+        "get_market_top_apps",
         "get_geo_visibility_summary",
         "compare_geo_visibility",
         "get_geo_citation_analysis",
         "get_geo_prompt_insights",
+        "get_geo_data_availability",
     ]
 
 
@@ -45,6 +47,7 @@ def decode_tool_result(result) -> dict:
 def test_get_metric_timeseries_returns_latest_window(monkeypatch) -> None:
     session_factory = build_sqlite_session_factory()
     with session_factory() as session:
+        session.add(AdvertiserRecord(name="Chime", countries_csv="US"))
         for day in range(1, 6):
             session.add(
                 SensorTowerDownloadRecord(
