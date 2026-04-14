@@ -198,6 +198,46 @@ For Neon, use the SQLAlchemy-style URL:
 postgresql+psycopg://USER:PASSWORD@HOST/DATABASE?sslmode=require
 ```
 
+## Monitoring Hugging Face MCP
+
+The repository includes a small adaptive monitor for the hosted Hugging Face MCP:
+
+- [scripts/monitor_hf_mcp.py](/Users/yongcheng/Desktop/projects/AdIntel/scripts/monitor_hf_mcp.py)
+
+It checks the Space health endpoint, then:
+
+- waits `4 hours` after a success
+- waits `30 minutes` after a failure
+- can alert to Slack through an incoming webhook
+
+Basic setup:
+
+```bash
+export HF_MCP_URL="https://yongchengmu-adintel-mcp.hf.space/"
+export HF_MCP_SLACK_WEBHOOK_URL="https://hooks.slack.com/services/..."
+./scripts/monitor_hf_mcp.py
+```
+
+One-shot probe:
+
+```bash
+./scripts/monitor_hf_mcp.py --single-run
+```
+
+Recommended env vars:
+
+- `HF_MCP_SLACK_WEBHOOK_URL`
+- `HF_MCP_ALERT_AFTER_FAILURES=2`
+- `HF_MCP_ALERT_ON_RECOVERY=true`
+- `HF_MCP_SUCCESS_HOURS=4`
+- `HF_MCP_FAILURE_MINUTES=30`
+
+Example `cron` entry:
+
+```cron
+0 * * * * /Users/yongcheng/Desktop/projects/AdIntel/.venv/bin/python /Users/yongcheng/Desktop/projects/AdIntel/scripts/monitor_hf_mcp.py >> /Users/yongcheng/Desktop/projects/AdIntel/state/hf_mcp_monitor.log 2>&1
+```
+
 ## Database Workflow
 
 ### Canonical Schema
