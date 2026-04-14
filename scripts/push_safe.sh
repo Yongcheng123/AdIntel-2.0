@@ -114,7 +114,21 @@ push_one_remote() {
   trap cleanup_branch RETURN
 
   echo "Cherry-picking ${TARGET_COMMIT} onto ${remote_name}/${TARGET_BRANCH}..."
-  git cherry-pick "${TARGET_COMMIT}" >/dev/null
+  if git cherry-pick "${TARGET_COMMIT}" >/dev/null 2>&1; then
+    :
+  else
+    if git rev-parse --verify CHERRY_PICK_HEAD >/dev/null 2>&1; then
+      if git diff --quiet && git diff --cached --quiet; then
+        git cherry-pick --skip >/dev/null 2>&1 || true
+        echo "Nothing new to push for ${remote_name}; commit is already applied."
+        return 0
+      fi
+      echo "Cherry-pick for ${remote_name} needs manual conflict resolution." >&2
+      return 1
+    fi
+    echo "Cherry-pick failed for ${remote_name}." >&2
+    return 1
+  fi
 
   echo "Pushing ${temp_branch} -> ${remote_name}/${TARGET_BRANCH}..."
   git push "${push_ref}" "HEAD:${TARGET_BRANCH}"
