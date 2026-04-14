@@ -643,6 +643,7 @@ def create_mcp_server() -> FastMCP:
             "5. Opportunities: uncovered engines, high-volume uncited prompts, negative sentiment areas"
         ),
         streamable_http_path="/",
+        host="0.0.0.0",
         stateless_http=is_vercel or is_hf_space,
         transport_security=(
             TransportSecuritySettings(enable_dns_rebinding_protection=False)
