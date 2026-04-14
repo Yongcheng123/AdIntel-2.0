@@ -557,6 +557,7 @@ def create_mcp_server() -> FastMCP:
     # unaffected because these HTTP settings are only relevant for HTTP
     # transports.
     is_vercel = bool(os.getenv("VERCEL"))
+    is_hf_space = bool(os.getenv("SPACE_AUTHOR_NAME") or os.getenv("SPACE_ID"))
     server = FastMCP(
         name="AdIntel",
         instructions=(
@@ -642,10 +643,10 @@ def create_mcp_server() -> FastMCP:
             "5. Opportunities: uncovered engines, high-volume uncited prompts, negative sentiment areas"
         ),
         streamable_http_path="/",
-        stateless_http=is_vercel,
+        stateless_http=is_vercel or is_hf_space,
         transport_security=(
             TransportSecuritySettings(enable_dns_rebinding_protection=False)
-            if is_vercel
+            if is_vercel or is_hf_space
             else None
         ),
     )
