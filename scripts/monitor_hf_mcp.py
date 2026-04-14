@@ -5,9 +5,11 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import smtplib
 import time
 from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
+from email.message import EmailMessage
 from pathlib import Path
 from urllib import error, request
 
@@ -90,7 +92,43 @@ def parse_args() -> argparse.Namespace:
         "--alert-on-recovery",
         action=argparse.BooleanOptionalAction,
         default=os.getenv("HF_MCP_ALERT_ON_RECOVERY", "true").lower() in {"1", "true", "yes", "on"},
-        help="Send a Slack message when the MCP recovers after a failure streak.",
+        help="Send a recovery alert when the MCP recovers after a failure streak.",
+    )
+    parser.add_argument(
+        "--email-to",
+        default=os.getenv("HF_MCP_EMAIL_TO"),
+        help="Optional email recipient for failure and recovery alerts.",
+    )
+    parser.add_argument(
+        "--email-from",
+        default=os.getenv("HF_MCP_EMAIL_FROM"),
+        help="Optional email sender address used for SMTP alerts.",
+    )
+    parser.add_argument(
+        "--smtp-host",
+        default=os.getenv("HF_MCP_SMTP_HOST"),
+        help="SMTP host for email alerts.",
+    )
+    parser.add_argument(
+        "--smtp-port",
+        type=int,
+        default=int(os.getenv("HF_MCP_SMTP_PORT", "587")),
+        help="SMTP port for email alerts.",
+    )
+    parser.add_argument(
+        "--smtp-username",
+        default=os.getenv("HF_MCP_SMTP_USERNAME"),
+        help="SMTP username for email alerts.",
+    )
+    parser.add_argument(
+        "--smtp-password",
+        default=os.getenv("HF_MCP_SMTP_PASSWORD"),
+        help="SMTP password or app password for email alerts.",
+    )
+    parser.add_argument(
+        "--smtp-no-tls",
+        action="store_true",
+        help="Disable STARTTLS for SMTP servers that do not support it.",
     )
     return parser.parse_args()
 
@@ -217,6 +255,75 @@ def build_slack_message(
     )
 
 
+def build_email_alert(
+    *,
+    ok: bool,
+    url: str,
+    consecutive_failures: int,
+    http_status: int | None,
+    detail: str | None,
+    checked_at: datetime,
+    previous_failures: int,
+    alert_after_failures: int,
+) -> tuple[str, str] | None:
+    if ok:
+        if previous_failures >= alert_after_failures:
+            return (
+                "AdIntel HF MCP recovered",
+                (
+                    f"AdIntel HF MCP recovered at {isoformat(checked_at)}\n\n"
+                    f"URL: {url}\n"
+                    f"Previous failure streak: {previous_failures}\n"
+                ),
+            )
+        return None
+
+    if previous_failures >= alert_after_failures:
+        return None
+    if consecutive_failures < alert_after_failures:
+        return None
+
+    return (
+        "AdIntel HF MCP unhealthy",
+        (
+            f"AdIntel HF MCP unhealthy at {isoformat(checked_at)}\n\n"
+            f"URL: {url}\n"
+            f"Consecutive failures: {consecutive_failures}\n"
+            f"HTTP status: {http_status if http_status is not None else 'n/a'}\n"
+            f"Detail: {detail or 'unknown'}\n"
+        ),
+    )
+
+
+def send_email(
+    *,
+    smtp_host: str,
+    smtp_port: int,
+    smtp_username: str | None,
+    smtp_password: str | None,
+    email_from: str,
+    email_to: str,
+    subject: str,
+    body: str,
+    use_tls: bool,
+) -> None:
+    msg = EmailMessage()
+    msg["Subject"] = subject
+    msg["From"] = email_from
+    msg["To"] = email_to
+    msg.set_content(body)
+
+    with smtplib.SMTP(smtp_host, smtp_port, timeout=15) as smtp:
+        smtp.ehlo()
+        if use_tls:
+            smtp.starttls()
+            smtp.ehlo()
+        if smtp_username and smtp_password:
+            smtp.login(smtp_username, smtp_password)
+        smtp.send_message(msg)
+    print(f"  email: delivered to {email_to}")
+
+
 def main() -> int:
     args = parse_args()
     url = args.url.rstrip("/") + "/"
@@ -274,6 +381,34 @@ def main() -> int:
                     slack_post(args.slack_webhook_url, slack_message)
                 except Exception as exc:
                     print(f"  slack: failed to deliver alert: {exc}")
+
+        if args.email_to and args.email_from and args.smtp_host:
+            email_alert = build_email_alert(
+                ok=ok,
+                url=url,
+                consecutive_failures=next_failures,
+                http_status=http_status,
+                detail=detail,
+                checked_at=checked_at,
+                previous_failures=previous.consecutive_failures,
+                alert_after_failures=max(1, args.alert_after_failures),
+            )
+            if email_alert:
+                subject, body = email_alert
+                try:
+                    send_email(
+                        smtp_host=args.smtp_host,
+                        smtp_port=args.smtp_port,
+                        smtp_username=args.smtp_username,
+                        smtp_password=args.smtp_password,
+                        email_from=args.email_from,
+                        email_to=args.email_to,
+                        subject=subject,
+                        body=body,
+                        use_tls=not args.smtp_no_tls,
+                    )
+                except Exception as exc:
+                    print(f"  email: failed to deliver alert: {exc}")
 
         if args.single_run:
             return 0 if ok else 1

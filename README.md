@@ -208,13 +208,18 @@ It checks the Space health endpoint, then:
 
 - waits `4 hours` after a success
 - waits `30 minutes` after a failure
-- can alert to Slack through an incoming webhook
+- can alert to Slack or email
 
 Basic setup:
 
 ```bash
 export HF_MCP_URL="https://yongchengmu-adintel-mcp.hf.space/"
-export HF_MCP_SLACK_WEBHOOK_URL="https://hooks.slack.com/services/..."
+export HF_MCP_EMAIL_TO="you@example.com"
+export HF_MCP_EMAIL_FROM="you@example.com"
+export HF_MCP_SMTP_HOST="smtp.gmail.com"
+export HF_MCP_SMTP_PORT="587"
+export HF_MCP_SMTP_USERNAME="you@example.com"
+export HF_MCP_SMTP_PASSWORD="your-app-password"
 ./scripts/monitor_hf_mcp.py
 ```
 
@@ -227,6 +232,12 @@ One-shot probe:
 Recommended env vars:
 
 - `HF_MCP_SLACK_WEBHOOK_URL`
+- `HF_MCP_EMAIL_TO`
+- `HF_MCP_EMAIL_FROM`
+- `HF_MCP_SMTP_HOST`
+- `HF_MCP_SMTP_PORT`
+- `HF_MCP_SMTP_USERNAME`
+- `HF_MCP_SMTP_PASSWORD`
 - `HF_MCP_ALERT_AFTER_FAILURES=2`
 - `HF_MCP_ALERT_ON_RECOVERY=true`
 - `HF_MCP_SUCCESS_HOURS=4`
