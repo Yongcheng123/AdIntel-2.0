@@ -95,6 +95,7 @@ push_one_remote() {
   local remote_name="$1"
   local fetch_ref="$2"
   local push_ref="$3"
+  local remote_url_override="${4:-}"
   local temp_branch="push-${remote_name}-$(date +%s)"
 
   if git show-ref --verify --quiet "refs/heads/${temp_branch}"; then
@@ -102,7 +103,11 @@ push_one_remote() {
   fi
 
   echo "Fetching ${remote_name}/${TARGET_BRANCH}..."
-  git fetch "${fetch_ref}" "${TARGET_BRANCH}"
+  if [[ -n "${remote_url_override}" ]]; then
+    git -c "remote.${remote_name}.url=${remote_url_override}" fetch "${fetch_ref}" "${TARGET_BRANCH}"
+  else
+    git fetch "${fetch_ref}" "${TARGET_BRANCH}"
+  fi
 
   git switch -c "${temp_branch}" FETCH_HEAD >/dev/null
 
@@ -131,10 +136,18 @@ push_one_remote() {
   fi
 
   echo "Pushing ${temp_branch} -> ${remote_name}/${TARGET_BRANCH}..."
-  git push "${push_ref}" "HEAD:${TARGET_BRANCH}"
+  if [[ -n "${remote_url_override}" ]]; then
+    git -c "remote.${remote_name}.url=${remote_url_override}" push "${push_ref}" "HEAD:${TARGET_BRANCH}"
+  else
+    git push "${push_ref}" "HEAD:${TARGET_BRANCH}"
+  fi
 
   local remote_head
-  remote_head="$(git ls-remote "${fetch_ref}" "refs/heads/${TARGET_BRANCH}" | awk '{print $1}')"
+  if [[ -n "${remote_url_override}" ]]; then
+    remote_head="$(git ls-remote "${remote_url_override}" "refs/heads/${TARGET_BRANCH}" | awk '{print $1}')"
+  else
+    remote_head="$(git ls-remote "${fetch_ref}" "refs/heads/${TARGET_BRANCH}" | awk '{print $1}')"
+  fi
   echo "${remote_name}/${TARGET_BRANCH} now at ${remote_head}"
 }
 
@@ -144,7 +157,7 @@ fi
 
 if [[ "${REMOTE_MODE}" == "hf" || "${REMOTE_MODE}" == "both" ]]; then
   HF_URL="$(resolve_hf_url)"
-  push_one_remote "hf" "${HF_URL}" "${HF_URL}"
+  push_one_remote "hf" "hf" "hf" "${HF_URL}"
 fi
 
 echo "Finished."
