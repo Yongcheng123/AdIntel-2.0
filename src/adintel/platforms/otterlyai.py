@@ -499,9 +499,15 @@ async def collect_batch(
 ) -> list[dict[str, Any]]:
     playwright, context = await launch_context(headless=headless)
     try:
+        print(
+            f"[otterly] Starting batch: targets={len(targets)} services={len(services)} "
+            f"window={start_date}..{end_date} page_size={page_size} write_db={write_db} save_files={save_files}",
+            flush=True,
+        )
         reports = await api_get(context, "/brands/reports")
         if not isinstance(reports, list):
             raise RuntimeError("Otterly /brands/reports did not return a list.")
+        print(f"[otterly] Loaded {len(reports)} reports from Otterly", flush=True)
 
         batch_rows: dict[str, list[dict[str, Any]]] = {"prompts": [], "citations": []}
         summaries: list[dict[str, Any]] = []
@@ -509,18 +515,24 @@ async def collect_batch(
         for target in targets:
             brand = target["brand"]
             country = target["country"]
+            print(f"[otterly] Target {brand} ({country})", flush=True)
             report_id = lookup_report_id(reports, brand)
             if report_id is None:
+                print(f"[otterly]   report not found, skipping", flush=True)
                 summaries.append({"brand": brand, "country": country, "status": "missing_report"})
                 continue
 
             try:
                 report_payload = await fetch_report_payload(context, report_id)
             except Exception as exc:
+                print(f"[otterly]   report fetch failed: {exc}", flush=True)
                 summaries.append({"brand": brand, "country": country, "status": "error", "error": str(exc)})
                 continue
 
             for service in services:
+                service_label = normalize_engine_label(service) or service or "unknown"
+                started_at = time.perf_counter()
+                print(f"[otterly]   service={service_label} fetching prompts/citations", flush=True)
                 try:
                     prompts_payload = await fetch_prompts_payload(
                         context,
@@ -563,13 +575,21 @@ async def collect_batch(
                         {
                             "brand": brand,
                             "country": country,
-                            "service": normalize_engine_label(service),
+                            "service": service_label,
                             "report_id": report_id,
                             "prompt_rows": len(prompt_rows),
                             "citation_rows": len(citation_rows),
                             "status": "ok",
                         }
                     )
+                    elapsed = time.perf_counter() - started_at
+                    print(
+                        f"[otterly]   service={service_label} prompts={len(prompt_rows)} "
+                        f"citations={len(citation_rows)} elapsed={elapsed:.1f}s",
+                        flush=True,
+                    )
+                    if len(prompt_rows) == 0 and len(citation_rows) == 0:
+                        print(f"[otterly]   service={service_label} returned empty results", flush=True)
 
                     if save_files:
                         service_suffix = f".{service}" if service else ""
@@ -579,11 +599,12 @@ async def collect_batch(
                         prompt_target.write_text(json.dumps(prompt_rows, indent=2), encoding="utf-8")
                         citation_target.write_text(json.dumps(citation_rows, indent=2), encoding="utf-8")
                 except Exception as exc:
+                    print(f"[otterly]   service={service_label} failed: {exc}", flush=True)
                     summaries.append(
                         {
                             "brand": brand,
                             "country": country,
-                            "service": normalize_engine_label(service),
+                            "service": service_label,
                             "report_id": report_id,
                             "status": "error",
                             "error": str(exc),
@@ -598,8 +619,13 @@ async def collect_batch(
             session_factory = build_session_factory(settings)
             with session_factory() as session:
                 repo = OtterlyRepository(session)
-                repo.upsert_prompts(batch_rows["prompts"])
-                repo.upsert_citations(batch_rows["citations"])
+                prompt_count = repo.upsert_prompts(batch_rows["prompts"])
+                citation_count = repo.upsert_citations(batch_rows["citations"])
+                print(
+                    f"[otterly] Upserted prompts={prompt_count} citations={citation_count} into database",
+                    flush=True,
+                )
+        print(f"[otterly] Batch complete: summaries={len(summaries)}", flush=True)
         return summaries
     finally:
         await close_context(playwright, context)

@@ -4,6 +4,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PYTHON_BIN="${ROOT_DIR}/.venv/bin/python"
+export PYTHONUNBUFFERED=1
 
 if [[ ! -x "${PYTHON_BIN}" ]]; then
   echo "Missing virtualenv python at ${PYTHON_BIN}" >&2
@@ -14,7 +15,8 @@ fi
 CONFIG_FILE="${CONFIG_FILE:-${ROOT_DIR}/config/otterly_batch.yaml}"
 PAGE_SIZE="${PAGE_SIZE:-100}"
 WRITE_DB="${WRITE_DB:-true}"
-SAVE_FILES="${SAVE_FILES:-true}"
+# Keep the batch database-only unless explicitly overridden.
+SAVE_FILES="${SAVE_FILES:-false}"
 SHOW_DB_SUMMARY="${SHOW_DB_SUMMARY:-true}"
 
 # Resolve the app database URL via AdIntel settings (.env-aware) unless explicitly overridden.

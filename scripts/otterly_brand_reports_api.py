@@ -56,18 +56,19 @@ def export_prompts(
 ) -> None:
     """Export only the lean prompt fields needed for Postgres/MCP storage."""
 
+    service_key = normalize_engine_service_key(service)
     _, rows = asyncio.run(
         export_prompt_rows(
             report_id=report_id,
             country=country,
             start_date=start_date,
             end_date=end_date,
-            service=service,
+            service=service_key,
             headless=True,
         )
     )
 
-    service_suffix = f".{service}" if service else ""
+    service_suffix = f".{service_key}" if service_key else ""
     target = output or (OUTPUT_DIR / f"{report_id}.{country.lower()}.{end_date}{service_suffix}.refined.json")
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(json.dumps(rows, indent=2), encoding="utf-8")
@@ -91,19 +92,20 @@ def export_citations(
 ) -> None:
     """Export lean citation rows from Otterly brand reports."""
 
+    service_key = normalize_engine_service_key(service)
     _, rows = asyncio.run(
         export_citation_rows(
             report_id=report_id,
             country=country,
             start_date=start_date,
             end_date=end_date,
-            service=service,
+            service=service_key,
             page_size=page_size,
             headless=True,
         )
     )
 
-    service_suffix = f".{service}" if service else ""
+    service_suffix = f".{service_key}" if service_key else ""
     target = output or (OUTPUT_DIR / f"{report_id}.{country.lower()}.{end_date}{service_suffix}.citations.refined.json")
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(json.dumps(rows, indent=2), encoding="utf-8")

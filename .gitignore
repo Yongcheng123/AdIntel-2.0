@@ -20,6 +20,7 @@ __pycache__/
 .vercel
 
 # Browser automation artifacts
+.playwright-cli/
 .browser-data/
 .debug/
 state/

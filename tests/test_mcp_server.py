@@ -21,7 +21,6 @@ def test_mcp_server_registers_expected_tools() -> None:
         "read_schema_text",
         "run_query",
         "get_collection_health",
-        "get_collection_alerts",
         "get_recent_collection_runs",
         "get_metric_timeseries",
         "get_full_comparison",

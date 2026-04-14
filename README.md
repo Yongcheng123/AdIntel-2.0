@@ -1,3 +1,10 @@
+---
+title: AdIntel MCP
+sdk: docker
+app_port: 7860
+short_description: Public AdIntel MCP server with key-based access
+---
+
 # AdIntel
 
 AdIntel is a local-first scraping and intelligence workspace.

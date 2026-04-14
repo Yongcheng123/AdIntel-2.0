@@ -6,6 +6,7 @@ from typing import Any
 ENGINE_LABELS = {
     "chatgpt": "ChatGPT",
     "perplexity": "Perplexity",
+    "google": "Google AI Overview",
     "google_ai_overview": "Google AI Overview",
     "google_ai_mode": "Google AI Mode",
     "copilot": "Microsoft Copilot",
@@ -18,11 +19,12 @@ ENGINE_SERVICE_KEYS = {
     "ChatGPT": "chatgpt",
     "perplexity": "perplexity",
     "Perplexity": "perplexity",
-    "google_ai_overview": "google_ai_overview",
-    "Google AI Overview": "google_ai_overview",
-    "copilot": "microsoft_copilot",
-    "microsoft_copilot": "microsoft_copilot",
-    "Microsoft Copilot": "microsoft_copilot",
+    "google": "google",
+    "google_ai_overview": "google",
+    "Google AI Overview": "google",
+    "copilot": "copilot",
+    "microsoft_copilot": "copilot",
+    "Microsoft Copilot": "copilot",
 }
 
 

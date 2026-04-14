@@ -1,0 +1,13 @@
+.git
+.venv
+__pycache__
+.pytest_cache
+.ruff_cache
+.DS_Store
+.playwright-cli
+state
+output
+tmp
+docs
+tests
+node_modules

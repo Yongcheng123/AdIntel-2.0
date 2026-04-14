@@ -187,12 +187,35 @@ def _build_summary(advertiser_name: str, country: str | None = None) -> dict:
             _q(SensorTowerRankingRecord)
             .order_by(desc(SensorTowerRankingRecord.rank_date))
         )
-        q_imp = _q(SensorTowerImpressionShareRecord).where(
+        # Total SOV ("all" network aggregate)
+        q_imp_all = _q(SensorTowerImpressionShareRecord).where(
             SensorTowerImpressionShareRecord.network == "all",
         )
         latest_impression_share = session.scalar(
-            q_imp.order_by(desc(SensorTowerImpressionShareRecord.period_date))
+            q_imp_all.order_by(desc(SensorTowerImpressionShareRecord.period_date))
         )
+        # Per-network SOV breakdown: top networks by latest SOV
+        latest_imp_date = (
+            latest_impression_share.period_date if latest_impression_share else None
+        )
+        top_networks: list[dict] = []
+        if latest_imp_date:
+            net_rows = session.scalars(
+                select(SensorTowerImpressionShareRecord)
+                .where(SensorTowerImpressionShareRecord.advertiser_name == canonical_name)
+                .where(SensorTowerImpressionShareRecord.country == (country or "US"))
+                .where(SensorTowerImpressionShareRecord.period_date == latest_imp_date)
+                .where(SensorTowerImpressionShareRecord.network != "all")
+                .where(SensorTowerImpressionShareRecord.network != "other")
+                .where(SensorTowerImpressionShareRecord.sov_pct > 0)
+                .order_by(desc(SensorTowerImpressionShareRecord.sov_pct))
+                .limit(8)
+            ).all()
+            top_networks = [
+                {"network": r.network, "sov_pct": _to_float(r.sov_pct)}
+                for r in net_rows
+            ]
+
         demographics = session.scalars(
             _q(SensorTowerDemographicRecord)
             .order_by(SensorTowerDemographicRecord.age_bracket)
@@ -201,21 +224,185 @@ def _build_summary(advertiser_name: str, country: str | None = None) -> dict:
             _q(SensorTowerReviewRecord)
             .order_by(desc(SensorTowerReviewRecord.period_date))
         )
+
+        # Review sentiment distribution from review_texts table
+        review_sentiment_q = (
+            select(
+                SensorTowerReviewTextRecord.sentiment,
+                func.count().label("cnt"),
+            )
+            .where(SensorTowerReviewTextRecord.advertiser_name == canonical_name)
+            .where(SensorTowerReviewTextRecord.sentiment.isnot(None))
+            .group_by(SensorTowerReviewTextRecord.sentiment)
+        )
+        if country:
+            review_sentiment_q = review_sentiment_q.where(
+                SensorTowerReviewTextRecord.country == country
+            )
+        sentiment_dist = {
+            row.sentiment: row.cnt
+            for row in session.execute(review_sentiment_q).all()
+        }
+
+        # Top review tags with frequency counts
+        all_tags_q = (
+            select(SensorTowerReviewTextRecord.tags)
+            .where(SensorTowerReviewTextRecord.advertiser_name == canonical_name)
+            .where(SensorTowerReviewTextRecord.tags.isnot(None))
+        )
+        if country:
+            all_tags_q = all_tags_q.where(
+                SensorTowerReviewTextRecord.country == country
+            )
+        tag_counts: dict[str, int] = {}
+        for (tags,) in session.execute(all_tags_q).all():
+            for tag in (tags or []):
+                tag_counts[tag] = tag_counts.get(tag, 0) + 1
+        top_tags = [
+            {"tag": t, "count": c}
+            for t, c in sorted(tag_counts.items(), key=lambda x: x[1], reverse=True)[:10]
+        ]
+
+        # Version breakdown: avg rating per app_version (last 5 versions by recency)
+        version_q = (
+            select(
+                SensorTowerReviewTextRecord.app_version,
+                func.avg(SensorTowerReviewTextRecord.star_rating).label("avg_rating"),
+                func.count().label("review_count"),
+                func.max(SensorTowerReviewTextRecord.review_date).label("latest_date"),
+            )
+            .where(SensorTowerReviewTextRecord.advertiser_name == canonical_name)
+            .where(SensorTowerReviewTextRecord.app_version.isnot(None))
+            .group_by(SensorTowerReviewTextRecord.app_version)
+            .order_by(func.max(SensorTowerReviewTextRecord.review_date).desc())
+            .limit(5)
+        )
+        if country:
+            version_q = version_q.where(
+                SensorTowerReviewTextRecord.country == country
+            )
+        version_breakdown = [
+            {
+                "app_version": row.app_version,
+                "avg_rating": round(float(row.avg_rating), 2) if row.avg_rating else None,
+                "review_count": row.review_count,
+                "latest_review_date": row.latest_date.isoformat() if row.latest_date else None,
+            }
+            for row in session.execute(version_q).all()
+        ]
+
+        # 5 most recent reviews (kept for quick reading)
         recent_review_texts = session.scalars(
             _q(SensorTowerReviewTextRecord)
             .order_by(desc(SensorTowerReviewTextRecord.review_date))
             .limit(5)
         ).all()
+
+        # Creative strategy breakdown
+        creative_type_q = (
+            select(
+                SensorTowerCreativeRecord.creative_type,
+                func.count().label("cnt"),
+            )
+            .where(SensorTowerCreativeRecord.advertiser_name == canonical_name)
+            .group_by(SensorTowerCreativeRecord.creative_type)
+        )
+        creative_type_dist = {
+            row.creative_type: row.cnt
+            for row in session.execute(creative_type_q).all()
+        }
+
+        creative_network_q = (
+            select(
+                SensorTowerCreativeRecord.network,
+                func.count().label("cnt"),
+            )
+            .where(SensorTowerCreativeRecord.advertiser_name == canonical_name)
+            .where(SensorTowerCreativeRecord.network.isnot(None))
+            .group_by(SensorTowerCreativeRecord.network)
+            .order_by(func.count().desc())
+        )
+        creative_network_dist = {
+            row.network: row.cnt
+            for row in session.execute(creative_network_q).all()
+        }
+
+        creative_duration_q = (
+            select(
+                SensorTowerCreativeRecord.duration_bucket,
+                func.count().label("cnt"),
+            )
+            .where(SensorTowerCreativeRecord.advertiser_name == canonical_name)
+            .where(SensorTowerCreativeRecord.duration_bucket.isnot(None))
+            .group_by(SensorTowerCreativeRecord.duration_bucket)
+            .order_by(func.count().desc())
+        )
+        creative_duration_dist = {
+            row.duration_bucket: row.cnt
+            for row in session.execute(creative_duration_q).all()
+        }
+
+        # Monthly creative launch cadence (last 6 months)
+        creative_cadence_q = (
+            select(
+                func.date_trunc("month", SensorTowerCreativeRecord.first_seen).label("month"),
+                func.count().label("cnt"),
+            )
+            .where(SensorTowerCreativeRecord.advertiser_name == canonical_name)
+            .where(SensorTowerCreativeRecord.first_seen.isnot(None))
+            .group_by(func.date_trunc("month", SensorTowerCreativeRecord.first_seen))
+            .order_by(func.date_trunc("month", SensorTowerCreativeRecord.first_seen).desc())
+            .limit(6)
+        )
+        creative_cadence = [
+            {"month": row.month.strftime("%Y-%m") if row.month else None, "new_creatives": row.cnt}
+            for row in session.execute(creative_cadence_q).all()
+        ]
+        creative_cadence.reverse()  # chronological order
+
         recent_creatives = session.scalars(
             _q(SensorTowerCreativeRecord)
             .order_by(desc(SensorTowerCreativeRecord.first_seen))
             .limit(5)
         ).all()
+
+        # ASO: richer stats (top 20, plus summary counts)
         aso_keywords = session.scalars(
             _q(SensorTowerAsoKeywordRecord)
             .order_by(SensorTowerAsoKeywordRecord.rank)
-            .limit(10)
+            .limit(20)
         ).all()
+
+        aso_total_q = (
+            select(
+                func.count().label("total"),
+                func.avg(SensorTowerAsoKeywordRecord.rank).label("avg_rank"),
+            )
+            .where(SensorTowerAsoKeywordRecord.advertiser_name == canonical_name)
+        )
+        if country:
+            aso_total_q = aso_total_q.where(
+                SensorTowerAsoKeywordRecord.country == country
+            )
+        aso_stats = session.execute(aso_total_q).one()
+
+        aso_type_q = (
+            select(
+                SensorTowerAsoKeywordRecord.keyword_type,
+                func.count().label("cnt"),
+            )
+            .where(SensorTowerAsoKeywordRecord.advertiser_name == canonical_name)
+            .where(SensorTowerAsoKeywordRecord.keyword_type.isnot(None))
+            .group_by(SensorTowerAsoKeywordRecord.keyword_type)
+        )
+        if country:
+            aso_type_q = aso_type_q.where(
+                SensorTowerAsoKeywordRecord.country == country
+            )
+        aso_type_dist = {
+            row.keyword_type: row.cnt
+            for row in session.execute(aso_type_q).all()
+        }
 
     return {
         "found": True,
@@ -250,21 +437,24 @@ def _build_summary(advertiser_name: str, country: str | None = None) -> dict:
                     "d1": _to_float(latest_retention.d1),
                     "d7": _to_float(latest_retention.d7),
                     "d30": _to_float(latest_retention.d30),
+                    "d60": _to_float(latest_retention.d60),
                     "country": latest_retention.country,
                 }
                 if latest_retention
                 else None
             ),
-            "latest_impression_share": (
-                {
-                    "period_date": latest_impression_share.period_date.isoformat(),
-                    "network": latest_impression_share.network,
-                    "sov_pct": _to_float(latest_impression_share.sov_pct),
-                    "country": latest_impression_share.country,
-                }
-                if latest_impression_share
-                else None
-            ),
+            "impression_share": {
+                "total_sov": (
+                    {
+                        "period_date": latest_impression_share.period_date.isoformat(),
+                        "sov_pct": _to_float(latest_impression_share.sov_pct),
+                        "country": latest_impression_share.country,
+                    }
+                    if latest_impression_share
+                    else None
+                ),
+                "top_networks": top_networks,
+            },
             "latest_ranking": (
                 {
                     "rank_date": latest_ranking.rank_date.isoformat(),
@@ -285,54 +475,78 @@ def _build_summary(advertiser_name: str, country: str | None = None) -> dict:
                 }
                 for row in demographics
             ],
-            "latest_reviews": (
-                {
-                    "period_date": latest_reviews.period_date.isoformat(),
-                    "avg_rating": _to_float(latest_reviews.avg_rating),
-                    "rating_count": latest_reviews.rating_count,
-                    "star_1_count": latest_reviews.star_1_count,
-                    "star_5_count": latest_reviews.star_5_count,
-                    "country": latest_reviews.country,
-                }
-                if latest_reviews
-                else None
-            ),
-            "recent_review_texts": [
-                {
-                    "review_id": row.review_id,
-                    "review_date": row.review_date.isoformat(),
-                    "country": row.country,
-                    "star_rating": _to_float(row.star_rating),
-                    "title": row.title,
-                    "body": row.body,
-                    "sentiment": row.sentiment,
-                    "tags": row.tags,
-                }
-                for row in recent_review_texts
-            ],
-            "recent_creatives": [
-                {
-                    "creative_id": row.creative_id,
-                    "creative_type": row.creative_type,
-                    "network": row.network,
-                    "thumbnail_url": row.thumbnail_url,
-                    "duration_bucket": row.duration_bucket,
-                    "first_seen": row.first_seen.isoformat() if row.first_seen else None,
-                }
-                for row in recent_creatives
-            ],
-            "aso_keywords": [
-                {
-                    "keyword": row.keyword,
-                    "keyword_type": row.keyword_type,
-                    "rank": row.rank,
-                    "traffic_score": _to_float(row.traffic_score),
-                    "opportunity_score": _to_float(row.opportunity_score),
-                    "country": row.country,
-                    "device": row.device,
-                }
-                for row in aso_keywords
-            ],
+            "reviews": {
+                "latest_aggregate": (
+                    {
+                        "period_date": latest_reviews.period_date.isoformat(),
+                        "avg_rating": _to_float(latest_reviews.avg_rating),
+                        "rating_count": latest_reviews.rating_count,
+                        "star_1_count": latest_reviews.star_1_count,
+                        "star_2_count": latest_reviews.star_2_count,
+                        "star_3_count": latest_reviews.star_3_count,
+                        "star_4_count": latest_reviews.star_4_count,
+                        "star_5_count": latest_reviews.star_5_count,
+                        "country": latest_reviews.country,
+                    }
+                    if latest_reviews
+                    else None
+                ),
+                "sentiment_distribution": sentiment_dist,
+                "top_tags": top_tags,
+                "version_breakdown": version_breakdown,
+                "recent_reviews": [
+                    {
+                        "review_id": row.review_id,
+                        "review_date": row.review_date.isoformat(),
+                        "country": row.country,
+                        "star_rating": _to_float(row.star_rating),
+                        "title": row.title,
+                        "body": row.body,
+                        "sentiment": row.sentiment,
+                        "tags": row.tags,
+                        "app_version": row.app_version,
+                    }
+                    for row in recent_review_texts
+                ],
+            },
+            "creatives": {
+                "strategy_summary": {
+                    "by_type": creative_type_dist,
+                    "by_network": creative_network_dist,
+                    "by_duration": creative_duration_dist,
+                    "monthly_cadence": creative_cadence,
+                },
+                "recent": [
+                    {
+                        "creative_id": row.creative_id,
+                        "creative_type": row.creative_type,
+                        "network": row.network,
+                        "thumbnail_url": row.thumbnail_url,
+                        "duration_bucket": row.duration_bucket,
+                        "first_seen": row.first_seen.isoformat() if row.first_seen else None,
+                    }
+                    for row in recent_creatives
+                ],
+            },
+            "aso_keywords": {
+                "summary": {
+                    "total_tracked": aso_stats.total or 0,
+                    "avg_rank": round(float(aso_stats.avg_rank), 1) if aso_stats.avg_rank else None,
+                    "by_type": aso_type_dist,
+                },
+                "top_20": [
+                    {
+                        "keyword": row.keyword,
+                        "keyword_type": row.keyword_type,
+                        "rank": row.rank,
+                        "traffic_score": _to_float(row.traffic_score),
+                        "opportunity_score": _to_float(row.opportunity_score),
+                        "country": row.country,
+                        "device": row.device,
+                    }
+                    for row in aso_keywords
+                ],
+            },
         },
     }
 
@@ -373,18 +587,29 @@ def create_mcp_server() -> FastMCP:
             "SENSORTOWER WORKFLOW:\n"
             "- Competitive comparison (2+ advertisers) → call get_full_comparison.\n"
             "  Returns 30-day timeseries for downloads and DAU, per-network SOV trends,\n"
-            "  and a server-computed gap_analysis (exclusive networks, SOV ratios, efficiency,\n"
-            "  opportunity bullets).\n\n"
+            "  and a server-computed gap_analysis covering: exclusive networks, SOV ratios,\n"
+            "  efficiency indicators, retention cohort gaps (d1/d7/d30/d60), review rating\n"
+            "  gaps, demographics skew comparison, and opportunity bullets.\n\n"
             "- Single advertiser deep dive → call get_advertiser_summary.\n"
-            "  Returns all latest data: demographics, reviews, creatives, ASO keywords.\n\n"
+            "  Returns all latest data including:\n"
+            "  · impression_share: total SOV + top networks breakdown\n"
+            "  · reviews: aggregate ratings, sentiment distribution (positive/neutral/negative),\n"
+            "    top tags with counts, version breakdown (avg rating per app version), recent reviews\n"
+            "  · creatives: strategy summary (by type/network/duration, monthly cadence) + recent 5\n"
+            "  · aso_keywords: summary (total tracked, avg rank, by type) + top 20 keywords\n"
+            "  · latest_retention includes d1/d7/d30/d60 cohorts\n\n"
             "- Custom date range or individual metric → use get_metric_timeseries.\n"
             "  Metrics: downloads, usage, retention, impression_share, rankings, reviews.\n\n"
             "- Market-wide category rankings → call get_market_top_apps.\n"
             "  Sort by: downloads, revenue, dau, impression_share, rank.\n"
-            "  Filter by network presence (e.g. only apps advertising on TikTok).\n\n"
+            "  Optional filters:\n"
+            "  · network_filter: only apps advertising on that network (admob, facebook, instagram,\n"
+            "    tiktok, youtube, snapchat, applovin, unity, mintegral)\n"
+            "  · min_downloads: exclude apps below a download threshold\n"
+            "  · app_category: cross-category search (e.g. 'Finance' apps within Overall ranking)\n\n"
             "- Custom analysis → call run_query with a SELECT statement.\n"
             "  Call read_schema_text first to understand available tables and columns.\n"
-            "  Limited to 100 rows; read-only (SELECT/WITH only).\n\n"
+            "  Configurable limit up to 500 rows (default 100); read-only (SELECT/WITH only).\n\n"
             "GEO (AI SEARCH VISIBILITY) WORKFLOW:\n"
             "- Single brand AI visibility → call get_geo_visibility_summary.\n"
             "  Shows visibility rate, engine breakdown, sentiment, top cited domains.\n\n"
@@ -395,15 +620,20 @@ def create_mcp_server() -> FastMCP:
             "- Prompt/query analysis → call get_geo_prompt_insights.\n"
             "  Shows top queries, ranking, blind-spot prompts where competitors win.\n\n"
             "COLLECTION HEALTH:\n"
-            "- get_collection_health / get_collection_alerts: check data freshness and failures.\n"
+            "- get_collection_health: check data freshness, failures, and active alerts in one call.\n"
+            "  Pass advertiser_name to scope to one brand; omit for all brands.\n"
+            "  Tune stale_hours (default 48) and max_consecutive_failures (default 3).\n"
             "- get_recent_collection_runs: inspect per-metric outcomes of past scrape runs.\n"
             "- list_advertisers: shows st_last_scraped, st_download_rows, geo_last_scraped per brand.\n\n"
             "COMPETITIVE GAP ANALYSIS REPORT FORMAT:\n"
             "1. Executive summary (who leads, by how much)\n"
-            "2. Side-by-side metrics table (downloads, DAU, revenue, total SOV)\n"
+            "2. Side-by-side metrics table (downloads, DAU, revenue, total SOV, avg rating)\n"
             "3. Ad placement gap: networks each advertiser uses exclusively\n"
             "4. Network efficiency: downloads-per-SOV-point comparison\n"
-            "5. Opportunities: untapped networks, underweight channels, strategic moves\n\n"
+            "5. Retention gap: d1/d7/d30/d60 cohort comparison with leader and gap size\n"
+            "6. Review rating gap: rating difference and leader\n"
+            "7. Demographics comparison: audience gender/age skew per advertiser\n"
+            "8. Opportunities: untapped networks, underweight channels, strategic moves\n\n"
             "GEO ANALYSIS REPORT FORMAT:\n"
             "1. Visibility overview: cited rate across AI engines\n"
             "2. Engine-by-engine breakdown with sentiment and rank\n"
@@ -509,7 +739,11 @@ def create_mcp_server() -> FastMCP:
     @server.tool(
         name="get_advertiser_summary",
         description=(
-            "Get the latest SensorTower summary for a specific advertiser. "
+            "Get a comprehensive SensorTower summary for a specific advertiser. "
+            "Returns: latest downloads/revenue, DAU/engagement, retention cohorts (d1/d7/d30/d60), "
+            "total SOV + top 8 networks, demographics, review sentiment distribution + top tags + "
+            "version breakdown + recent reviews, creative strategy (by type/network/duration/cadence) + "
+            "recent creatives, and top 20 ASO keywords with summary stats. "
             "Optionally filter by country code (e.g., 'US', 'BR')."
         ),
     )
@@ -567,10 +801,10 @@ def create_mcp_server() -> FastMCP:
         description=(
             "Execute a read-only SQL query against the AdIntel database. "
             "Only SELECT statements are allowed. Read schema://adintel first to understand the table structure. "
-            "Returns up to 100 rows."
+            "Returns up to max_rows rows (default 100, max 500)."
         ),
     )
-    def run_query(sql: str) -> str:
+    def run_query(sql: str, max_rows: int = 100) -> str:
         import re
         from sqlalchemy import text
 
@@ -586,7 +820,7 @@ def create_mcp_server() -> FastMCP:
         if re.search(forbidden, upper):
             return json.dumps({"error": "Only SELECT queries are allowed. Detected forbidden keyword."})
 
-        max_rows = 100
+        max_rows = max(1, min(max_rows, 500))
         try:
             with _session_factory()() as session:
                 conn = session.connection()
@@ -619,43 +853,43 @@ def create_mcp_server() -> FastMCP:
     @server.tool(
         name="get_collection_health",
         description=(
-            "Get collection health for an advertiser (or all advertisers). "
-            "Shows last successful run, consecutive failures, data staleness, and recent errors."
+            "Get collection health for one advertiser or all advertisers. "
+            "Shows last successful run, consecutive failures, data staleness, and recent errors. "
+            "Always includes active alerts (stale data, consecutive failures, never-collected advertisers). "
+            "Use stale_hours and max_consecutive_failures to tune alert thresholds."
         ),
     )
-    def get_collection_health(advertiser_name: str | None = None) -> str:
+    def get_collection_health(
+        advertiser_name: str | None = None,
+        stale_hours: float = 48,
+        max_consecutive_failures: int = 3,
+    ) -> str:
         with _session_factory()() as session:
             repo = CollectionHealthRepository(session)
             if advertiser_name:
                 health = repo.get_health_for_advertiser(advertiser_name)
             else:
                 health = repo.get_all_health()
-        return json.dumps({"collection_health": health}, indent=2)
-
-    @server.tool(
-        name="get_collection_alerts",
-        description=(
-            "Get active collection alerts: stale data, consecutive failures, and advertisers that have never succeeded. "
-            "Use this to check if data is trustworthy and up-to-date."
-        ),
-    )
-    def get_collection_alerts(
-        stale_hours: float = 48,
-        max_consecutive_failures: int = 3,
-    ) -> str:
-        with _session_factory()() as session:
-            repo = CollectionHealthRepository(session)
             alerts = repo.get_alerts(
                 stale_hours=stale_hours,
                 max_consecutive_failures=max_consecutive_failures,
             )
+            # Scope alerts to the requested advertiser when filtering
+            if advertiser_name:
+                alerts = [
+                    a for a in alerts
+                    if a.get("advertiser_name") == advertiser_name
+                ]
         return json.dumps(
             {
-                "alerts": alerts,
-                "alert_count": len(alerts),
-                "thresholds": {
-                    "stale_hours": stale_hours,
-                    "max_consecutive_failures": max_consecutive_failures,
+                "collection_health": health,
+                "alerts": {
+                    "active": alerts,
+                    "alert_count": len(alerts),
+                    "thresholds": {
+                        "stale_hours": stale_hours,
+                        "max_consecutive_failures": max_consecutive_failures,
+                    },
                 },
             },
             indent=2,
@@ -812,6 +1046,18 @@ def create_mcp_server() -> FastMCP:
                     .where(SensorTowerImpressionShareRecord.network == "all")
                     .order_by(desc(SensorTowerImpressionShareRecord.period_date))
                 )
+                latest_retention = session.scalar(
+                    _q(SensorTowerRetentionRecord)
+                    .order_by(desc(SensorTowerRetentionRecord.cohort_date))
+                )
+                latest_review = session.scalar(
+                    _q(SensorTowerReviewRecord)
+                    .order_by(desc(SensorTowerReviewRecord.period_date))
+                )
+                demographics = session.scalars(
+                    _q(SensorTowerDemographicRecord)
+                    .order_by(SensorTowerDemographicRecord.age_bracket)
+                ).all()
 
                 snapshot = {
                     "downloads": latest_dl.downloads if latest_dl else None,
@@ -822,6 +1068,27 @@ def create_mcp_server() -> FastMCP:
                     "usage_date": latest_usage.period_date.isoformat() if latest_usage else None,
                     "total_sov": _to_float(latest_imp.sov_pct) if latest_imp else None,
                     "sov_date": latest_imp.period_date.isoformat() if latest_imp else None,
+                    "retention": (
+                        {
+                            "cohort_date": latest_retention.cohort_date.isoformat(),
+                            "d1": _to_float(latest_retention.d1),
+                            "d7": _to_float(latest_retention.d7),
+                            "d30": _to_float(latest_retention.d30),
+                            "d60": _to_float(latest_retention.d60),
+                        }
+                        if latest_retention else None
+                    ),
+                    "avg_rating": _to_float(latest_review.avg_rating) if latest_review else None,
+                    "rating_count": latest_review.rating_count if latest_review else None,
+                    "reviews_date": latest_review.period_date.isoformat() if latest_review else None,
+                    "demographics": [
+                        {
+                            "age_bracket": row.age_bracket,
+                            "male_pct": _to_float(row.male_pct),
+                            "female_pct": _to_float(row.female_pct),
+                        }
+                        for row in demographics
+                    ],
                 }
 
                 # ── Timeseries: downloads & usage ─────────────────────
@@ -924,6 +1191,66 @@ def create_mcp_server() -> FastMCP:
                         f"{n}'s strongest network is {top_net} (SOV {top_sov:.4%})"
                     )
 
+            # Retention gap analysis
+            retention_gap: dict = {}
+            cohort_days = ["d1", "d7", "d30", "d60"]
+            advertisers_with_retention = {
+                n: d["snapshot"]["retention"]
+                for n, d in found.items()
+                if d["snapshot"].get("retention")
+            }
+            if len(advertisers_with_retention) >= 2:
+                for cohort in cohort_days:
+                    cohort_vals = {
+                        n: r[cohort]
+                        for n, r in advertisers_with_retention.items()
+                        if r.get(cohort) is not None
+                    }
+                    if len(cohort_vals) >= 2:
+                        best = max(cohort_vals, key=lambda n: cohort_vals[n])
+                        worst = min(cohort_vals, key=lambda n: cohort_vals[n])
+                        gap = cohort_vals[best] - cohort_vals[worst]
+                        retention_gap[cohort] = {
+                            "leader": best,
+                            "values": cohort_vals,
+                            "gap": round(gap, 4),
+                            "insight": f"{best} retains {gap:.1%} more users at {cohort}",
+                        }
+
+            # Review rating gap analysis
+            rating_gap: dict = {}
+            advertisers_with_ratings = {
+                n: d["snapshot"]["avg_rating"]
+                for n, d in found.items()
+                if d["snapshot"].get("avg_rating") is not None
+            }
+            if len(advertisers_with_ratings) >= 2:
+                best_rated = max(advertisers_with_ratings, key=lambda n: advertisers_with_ratings[n])
+                worst_rated = min(advertisers_with_ratings, key=lambda n: advertisers_with_ratings[n])
+                rating_diff = advertisers_with_ratings[best_rated] - advertisers_with_ratings[worst_rated]
+                rating_gap = {
+                    "leader": best_rated,
+                    "ratings": {n: round(v, 2) for n, v in advertisers_with_ratings.items()},
+                    "gap": round(rating_diff, 2),
+                    "insight": f"{best_rated} has a {rating_diff:.2f}-star rating advantage over {worst_rated}",
+                }
+
+            # Demographics gap analysis (age skew)
+            demographics_gap: list[dict] = []
+            for n, d in found.items():
+                demo = d["snapshot"].get("demographics", [])
+                if demo:
+                    total_male = sum(row["male_pct"] or 0 for row in demo)
+                    total_female = sum(row["female_pct"] or 0 for row in demo)
+                    count = len(demo)
+                    if count > 0:
+                        demographics_gap.append({
+                            "advertiser": n,
+                            "avg_male_pct": round(total_male / count, 1),
+                            "avg_female_pct": round(total_female / count, 1),
+                            "skew": "male-skewed" if total_male > total_female else "female-skewed",
+                        })
+
             gap_analysis = {
                 "network_coverage": {
                     n: {"exclusive": exclusive[n], "shared_with_others": sorted(shared)}
@@ -942,6 +1269,9 @@ def create_mcp_server() -> FastMCP:
                 "efficiency_indicators": {
                     n: {"downloads_per_sov_point": efficiency[n]} for n in found
                 },
+                "retention_gap": retention_gap,
+                "review_rating_gap": rating_gap,
+                "demographics_comparison": demographics_gap,
                 "opportunities": opportunities,
             }
 
@@ -958,12 +1288,29 @@ def create_mcp_server() -> FastMCP:
 
     # ── Market-wide tools ──────────────────────────────────────────────
 
+    # Network name → ad_on_* column mapping for market top apps
+    _MARKET_NETWORK_COLS = {
+        "admob": "ad_on_admob",
+        "facebook": "ad_on_facebook",
+        "instagram": "ad_on_instagram",
+        "tiktok": "ad_on_tiktok",
+        "youtube": "ad_on_youtube",
+        "snapchat": "ad_on_snapchat",
+        "applovin": "ad_on_applovin",
+        "unity": "ad_on_unity",
+        "mintegral": "ad_on_mintegral",
+    }
+
     @server.tool(
         name="get_market_top_apps",
         description=(
             "Get market-wide app rankings from SensorTower. "
             "Returns top apps by downloads, revenue, DAU, or impression share. "
-            "Use this for questions like 'which apps have the most downloads?' or 'top Finance apps by DAU'."
+            "Use this for questions like 'which apps have the most downloads?', 'top Finance apps by DAU', "
+            "or 'Finance apps advertising on TikTok'. "
+            "Filters: network_filter (e.g. 'tiktok', 'admob') to show only apps advertising on that network; "
+            "min_downloads to exclude small apps; app_category for cross-category searches (e.g. find 'Finance' "
+            "apps within the Overall ranking)."
         ),
     )
     def get_market_top_apps(
@@ -972,6 +1319,9 @@ def create_mcp_server() -> FastMCP:
         sort_by: str = "downloads",
         limit: int = 20,
         scrape_month: str | None = None,
+        network_filter: str | None = None,
+        min_downloads: int | None = None,
+        app_category: str | None = None,
     ) -> str:
         from adintel.db.models import SensorTowerMarketTopAppRecord
         from adintel.platforms.sensortower_parsers import CATEGORY_NAMES
@@ -979,6 +1329,16 @@ def create_mcp_server() -> FastMCP:
         valid_sort = {"downloads", "revenue", "dau", "impression_share", "rank"}
         if sort_by not in valid_sort:
             return json.dumps({"error": f"Invalid sort_by. Options: {', '.join(sorted(valid_sort))}"})
+
+        # Validate network_filter if provided
+        network_col: str | None = None
+        if network_filter:
+            network_col = _MARKET_NETWORK_COLS.get(network_filter.lower())
+            if network_col is None:
+                return json.dumps({
+                    "error": f"Unknown network_filter '{network_filter}'. "
+                             f"Options: {', '.join(sorted(_MARKET_NETWORK_COLS.keys()))}"
+                })
 
         # Resolve category name to ID or use as-is
         reverse = {v.lower(): k for k, v in CATEGORY_NAMES.items()}
@@ -1016,6 +1376,15 @@ def create_mcp_server() -> FastMCP:
                     })
                 q = q.where(SensorTowerMarketTopAppRecord.scrape_month == latest)
 
+            # Optional filters
+            if network_col:
+                col = getattr(SensorTowerMarketTopAppRecord, network_col)
+                q = q.where(col.is_(True))
+            if min_downloads is not None:
+                q = q.where(SensorTowerMarketTopAppRecord.downloads >= min_downloads)
+            if app_category:
+                q = q.where(SensorTowerMarketTopAppRecord.primary_category.ilike(f"%{app_category}%"))
+
             # Sort
             sort_col = getattr(SensorTowerMarketTopAppRecord, sort_by)
             if sort_by == "rank":
@@ -1047,10 +1416,19 @@ def create_mcp_server() -> FastMCP:
                 "country": row.country,
             })
 
+        active_filters: dict = {}
+        if network_filter:
+            active_filters["network_filter"] = network_filter
+        if min_downloads is not None:
+            active_filters["min_downloads"] = min_downloads
+        if app_category:
+            active_filters["app_category"] = app_category
+
         return json.dumps({
             "category": category_name,
             "country": country,
             "sort_by": sort_by,
+            "filters": active_filters,
             "count": len(results),
             "data": results,
         }, indent=2)
