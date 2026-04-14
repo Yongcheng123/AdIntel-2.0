@@ -249,6 +249,18 @@ Example `cron` entry:
 0 * * * * /Users/yongcheng/Desktop/projects/AdIntel/.venv/bin/python /Users/yongcheng/Desktop/projects/AdIntel/scripts/monitor_hf_mcp.py >> /Users/yongcheng/Desktop/projects/AdIntel/state/hf_mcp_monitor.log 2>&1
 ```
 
+## Safe Pushes
+
+If your local `main` has diverged from GitHub or Hugging Face, use:
+
+```bash
+scripts/push_safe.sh --remote both
+```
+
+That script starts from each remote's current `main`, cherry-picks your chosen
+commit, and pushes only that change. By default it uses `HEAD`. For Hugging
+Face, set `HF_TOKEN` first if the `hf` remote does not already have credentials.
+
 ## Database Workflow
 
 ### Canonical Schema
