@@ -30,6 +30,7 @@ advertisers:
       ios_app_id: '1436799971'
       android_package: com.binance.dev
 - name: Albert
+  domain: albert.com
   category: Games
   countries:
   - US
@@ -40,6 +41,7 @@ advertisers:
       publisher_id: 
       ios_app_id: '412786607'
 - name: Coinbase
+  domain: coinbase.com
   category: Finance
   countries:
   - US
@@ -51,6 +53,7 @@ advertisers:
       ios_app_id: '886427730'
       android_package: com.coinbase.android
 - name: eToro
+  domain: etoro.com
   category: Finance
   countries:
   - US
@@ -62,6 +65,7 @@ advertisers:
       ios_app_id: '674984916'
       android_package: com.etoro.openbook
 - name: Travel Town
+  domain: traveltowngame.com
   category: Games
   countries:
   - US
@@ -73,6 +77,7 @@ advertisers:
       ios_app_id: '1521236603'
       android_package: io.randomco.travel
 - name: Pokemon GO
+  domain: pokemongolive.com
   category: Games
   countries:
   - US
@@ -84,6 +89,7 @@ advertisers:
       ios_app_id: '1094591345'
       android_package: com.nianticlabs.pokemongo
 - name: Royal Match
+  domain: royalmatch.com
   category: Games
   countries:
   - US
@@ -95,6 +101,7 @@ advertisers:
       ios_app_id: '1482155847'
       android_package: com.dreamgames.royalmatch
 - name: MoneyLion
+  domain: moneylion.com
   category: Finance
   countries:
   - US
@@ -106,6 +113,7 @@ advertisers:
       ios_app_id: '1064677082'
       android_package: com.moneylion
 - name: Kraken
+  domain: kraken.com
   category: Finance
   countries:
   - US
@@ -118,6 +126,7 @@ advertisers:
       android_package: com.kraken.invest.app
 
 - name: Current
+  domain: current.com
   category: Finance
   countries:
   - US
@@ -129,6 +138,7 @@ advertisers:
       android_package: com.current.app
 
 - name: Dave
+  domain: dave.com
   category: Finance
   countries:
   - US
@@ -140,6 +150,7 @@ advertisers:
       android_package: com.dave
 
 - name: Koho
+  domain: koho.ca
   category: Finance
   countries:
   - CA
@@ -151,6 +162,7 @@ advertisers:
       android_package: ca.koho
 
 - name: Mistplay
+  domain: mistplay.com
   category: Games
   countries:
   - US
@@ -162,6 +174,7 @@ advertisers:
       android_package: com.mistplay.mistplay
 
 - name: MonopolyGo
+  domain: monopolygo.com
   category: Games
   countries:
   - US
@@ -173,6 +186,7 @@ advertisers:
       android_package: com.scopely.monopolygo
 
 - name: Possible Finance
+  domain: possiblefinance.com
   category: Finance
   countries:
   - US
@@ -184,6 +198,7 @@ advertisers:
       android_package: com.possible_mobile
 
 - name: Realtor
+  domain: realtor.com
   category: Lifestyle, Business
   countries:
   - US
@@ -195,6 +210,7 @@ advertisers:
       android_package: com.move.realtor
 
 - name: ScrabbleGo
+  domain: scrabblego.com
   category: Games
   countries:
   - US
@@ -206,6 +222,7 @@ advertisers:
       android_package: com.pieyel.scrabble
 
 - name: Shopback
+  domain: shopback.com
   category: Shopping, Lifestyle
   countries:
   - US
@@ -217,6 +234,7 @@ advertisers:
       android_package: com.shopback.app
 
 - name: Stash
+  domain: stash.com
   category: Finance, Education
   countries:
   - US
@@ -228,6 +246,7 @@ advertisers:
       android_package: com.stash.stashinvest
 
 - name: Tilt
+  domain: tilt.com
   category: Finance, Productivity
   countries:
   - US
@@ -239,6 +258,7 @@ advertisers:
       android_package: finance.empower
 
 - name: Upside
+  domain: upside.com
   category: Travel, Shopping
   countries:
   - US
@@ -272,6 +292,7 @@ advertisers:
 #       android_package: com.freecash.app2
 
 - name: swagbucks
+  domain: swagbucks.com
   category: Lifestyle, Shopping
   countries:
   - US
@@ -283,6 +304,7 @@ advertisers:
       android_package: com.prodege.swagbucksmobile
 
 - name: testerup
+  domain: testerup.com
   category: Finance
   countries:
   - US

@@ -394,7 +394,14 @@ class CollectionHealthRepository:
                     "severity": "critical",
                     "message": f"No successful collection in {health['total_runs']} runs.",
                 })
-        for platform in ("sensortower", "adclarity"):
+        # Always check the supported platforms, plus any historical/custom ones in the DB.
+        known_platforms = {
+            p
+            for (p,) in self.session.execute(
+                select(ScrapeRunRecord.platform).distinct()
+            ).all()
+        } | {"sensortower", "adclarity", "otterlyai"}
+        for platform in sorted(known_platforms):
             for advertiser_name in self.get_stale_advertisers(platform, stale_hours=stale_hours):
                 if any(
                     alert["advertiser_name"] == advertiser_name

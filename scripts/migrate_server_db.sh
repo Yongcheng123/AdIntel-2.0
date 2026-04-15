@@ -15,8 +15,8 @@ if [[ -z "${SERVER_DATABASE_URL:-}" ]]; then
   cat >&2 <<'EOF'
 SERVER_DATABASE_URL is not set.
 
-Example for Neon:
-  export SERVER_DATABASE_URL='postgresql://neondb_owner:npg_F3gB1CftVasl@ep-little-cherry-anuymqi3.c-6.us-east-1.aws.neon.tech/neondb?sslmode=require'
+Example:
+  export SERVER_DATABASE_URL='postgresql://yongcheng:RBO3TNd4bXMCvMyXSiqs@yongcheng-test.cgb5t3jqdx7r.us-east-1.rds.amazonaws.com:5432/yongcheng?sslmode=require'
 EOF
   exit 1
 fi

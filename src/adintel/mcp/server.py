@@ -7,7 +7,7 @@ from decimal import Decimal
 
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
-from sqlalchemy import case, desc, func, select
+from sqlalchemy import case, desc, func, or_, select
 
 from adintel.core.settings import ROOT_DIR, get_settings
 from adintel.db.models import (
@@ -19,6 +19,7 @@ from adintel.db.models import (
     SensorTowerDemographicRecord,
     SensorTowerDownloadRecord,
     SensorTowerImpressionShareRecord,
+    SensorTowerMarketTopAppRecord,
     SensorTowerRankingRecord,
     SensorTowerReviewRecord,
     SensorTowerReviewTextRecord,
@@ -142,6 +143,285 @@ def _resolved_info(advertiser) -> dict:
     if resolved_from:
         return {"resolved_from": resolved_from, "resolved_to": advertiser.name}
     return {}
+
+
+def _median(lst: list) -> float | int | None:
+    if not lst:
+        return None
+    n = len(lst)
+    s = sorted(lst)
+    return (s[n // 2 - 1] + s[n // 2]) / 2 if n % 2 == 0 else s[n // 2]
+
+
+def _percentile_rank(lst: list, val) -> int | None:
+    """What percentile does `val` fall at in the sorted list?"""
+    if not lst or val is None:
+        return None
+    below = sum(1 for x in lst if x < val)
+    return round(below / len(lst) * 100)
+
+
+def _compute_category_benchmarks(
+    session,
+    category: str,
+    country: str,
+    client_downloads: int | None = None,
+    client_dau: int | None = None,
+    client_sov: float | None = None,
+    client_networks: set[str] | None = None,
+) -> dict | None:
+    """Compute category-level benchmarks from market_top_apps and produce signals."""
+    category_tokens = [token.strip() for token in (category or "").split(",") if token.strip()]
+    if not category_tokens and category:
+        category_tokens = [category]
+
+    if not category_tokens:
+        return None
+
+    category_filter = or_(*[
+        or_(
+            SensorTowerMarketTopAppRecord.category.ilike(token),
+            SensorTowerMarketTopAppRecord.primary_category.ilike(f"%{token}%"),
+        )
+        for token in category_tokens
+    ])
+
+    latest_month = session.scalar(
+        select(func.max(SensorTowerMarketTopAppRecord.scrape_month))
+        .where(SensorTowerMarketTopAppRecord.country == country)
+        .where(category_filter)
+    )
+    if not latest_month:
+        return None
+
+    rows = session.scalars(
+        select(SensorTowerMarketTopAppRecord)
+        .where(SensorTowerMarketTopAppRecord.country == country)
+        .where(category_filter)
+        .where(SensorTowerMarketTopAppRecord.scrape_month == latest_month)
+    ).all()
+    if not rows:
+        return None
+
+    total = len(rows)
+    dl_list = [r.downloads for r in rows if r.downloads is not None]
+    dau_list = [r.dau for r in rows if r.dau is not None]
+    sov_list = [_to_float(r.impression_share) or 0 for r in rows if r.impression_share is not None]
+
+    # Network adoption: % of category apps advertising on each network
+    _NET_COLS = {
+        "admob": "ad_on_admob", "facebook": "ad_on_facebook",
+        "instagram": "ad_on_instagram", "tiktok": "ad_on_tiktok",
+        "youtube": "ad_on_youtube", "snapchat": "ad_on_snapchat",
+        "applovin": "ad_on_applovin", "unity": "ad_on_unity",
+        "mintegral": "ad_on_mintegral",
+    }
+    network_adoption: dict[str, float] = {}
+    for net, col in _NET_COLS.items():
+        count = sum(1 for r in rows if getattr(r, col, False))
+        network_adoption[net] = round(count / total, 3)
+
+    # Build signals when client metrics are provided
+    signals: list[dict] = []
+    if client_downloads is not None and dl_list:
+        pct = _percentile_rank(dl_list, client_downloads)
+        med = _median(dl_list)
+        if pct is not None and pct < 50:
+            signals.append({
+                "type": "below_median",
+                "metric": "downloads",
+                "client_value": client_downloads,
+                "category_median": med,
+                "percentile": pct,
+                "signal": f"Downloads at {pct}th percentile in {category} (median {med:,})",
+            })
+
+    if client_dau is not None and dau_list:
+        pct = _percentile_rank(dau_list, client_dau)
+        med = _median(dau_list)
+        if pct is not None and pct < 50:
+            signals.append({
+                "type": "below_median",
+                "metric": "dau",
+                "client_value": client_dau,
+                "category_median": med,
+                "percentile": pct,
+                "signal": f"DAU at {pct}th percentile in {category} (median {med:,})",
+            })
+
+    if client_sov is not None and sov_list:
+        pct = _percentile_rank(sov_list, client_sov)
+        med = _median(sov_list)
+        if pct is not None and pct < 50:
+            signals.append({
+                "type": "below_median",
+                "metric": "impression_share",
+                "client_value": round(client_sov, 6),
+                "category_median": round(med, 6) if med else None,
+                "percentile": pct,
+                "signal": f"SOV at {pct}th percentile in {category}",
+            })
+
+    if client_networks is not None:
+        for net, rate in network_adoption.items():
+            if net not in client_networks and rate >= 0.25:
+                signals.append({
+                    "type": "missing_popular_network",
+                    "network": net,
+                    "category_adoption_rate": rate,
+                    "signal": f"{rate:.0%} of {category} apps advertise on {net}, but this advertiser does not",
+                })
+
+    return {
+        "category": category,
+        "scrape_month": latest_month.isoformat(),
+        "total_apps_in_category": total,
+        "medians": {
+            "downloads": _median(dl_list),
+            "dau": _median(dau_list),
+            "impression_share": round(_median(sov_list), 6) if sov_list else None,
+        },
+        "network_adoption": network_adoption,
+        "signals": signals,
+    }
+
+
+def _compute_geo_snapshot(
+    session,
+    advertiser_name: str,
+    domain: str | None,
+    country: str | None,
+) -> dict | None:
+    """Lightweight GEO visibility snapshot for embedding in advertiser summaries."""
+    from adintel.db.models import AdvertiserRecord
+
+    # Resolve to the otterly target key (usually the domain)
+    target = None
+    candidates = [domain, advertiser_name] if domain else [advertiser_name]
+    for candidate in candidates:
+        if candidate:
+            exists = session.scalar(
+                select(OtterlyPromptRecord.target_brand_or_domain_name)
+                .where(OtterlyPromptRecord.target_brand_or_domain_name == candidate)
+                .limit(1)
+            )
+            if exists:
+                target = candidate
+                break
+    if not target:
+        # Try fuzzy domain match
+        target = session.scalar(
+            select(OtterlyPromptRecord.target_brand_or_domain_name)
+            .where(OtterlyPromptRecord.target_brand_or_domain_name.ilike(f"%{advertiser_name}%"))
+            .limit(1)
+        )
+    if not target:
+        return None
+
+    # Aggregate visibility stats via SQL
+    overview_q = select(
+        func.count().label("total"),
+        func.sum(case((OtterlyPromptRecord.domain_cited.is_(True), 1), else_=0)).label("cited"),
+    ).where(OtterlyPromptRecord.target_brand_or_domain_name == target)
+    if country:
+        overview_q = overview_q.where(OtterlyPromptRecord.country_code == country.lower())
+
+    stats = session.execute(overview_q).one()
+    total = stats.total or 0
+    if total == 0:
+        return None
+    cited = stats.cited or 0
+
+    # Per-engine breakdown
+    engine_q = (
+        select(
+            OtterlyPromptRecord.ai_engine,
+            func.count().label("total_prompts"),
+            func.sum(case((OtterlyPromptRecord.domain_cited.is_(True), 1), else_=0)).label("cited_prompts"),
+        )
+        .where(OtterlyPromptRecord.target_brand_or_domain_name == target)
+        .group_by(OtterlyPromptRecord.ai_engine)
+    )
+    if country:
+        engine_q = engine_q.where(OtterlyPromptRecord.country_code == country.lower())
+    engine_rows = session.execute(engine_q).all()
+    engines = []
+    for row in engine_rows:
+        t, c = row.total_prompts or 0, row.cited_prompts or 0
+        engines.append({
+            "engine": row.ai_engine,
+            "total": t,
+            "cited": c,
+            "visibility": round(c / t, 4) if t > 0 else 0,
+        })
+    engines.sort(key=lambda e: e["total"], reverse=True)
+
+    # Top blind-spot prompts (high volume, not cited, competitors present)
+    blind_q = (
+        select(
+            OtterlyPromptRecord.prompt_text,
+            OtterlyPromptRecord.prompt_volume,
+            OtterlyPromptRecord.ai_engine,
+            OtterlyPromptRecord.competitors,
+        )
+        .where(OtterlyPromptRecord.target_brand_or_domain_name == target)
+        .where(OtterlyPromptRecord.domain_cited.is_(False))
+        .where(OtterlyPromptRecord.competitors.isnot(None))
+        .order_by(OtterlyPromptRecord.prompt_volume.desc().nulls_last())
+        .limit(5)
+    )
+    if country:
+        blind_q = blind_q.where(OtterlyPromptRecord.country_code == country.lower())
+    blind_rows = session.execute(blind_q).all()
+    blind_spots = [
+        {
+            "prompt": row.prompt_text,
+            "volume": row.prompt_volume,
+            "engine": row.ai_engine,
+            "competitors_present": row.competitors,
+        }
+        for row in blind_rows
+    ]
+
+    # Signals
+    signals: list[dict] = []
+    visibility_rate = round(cited / total, 4)
+    if visibility_rate < 0.15:
+        signals.append({
+            "type": "low_overall_visibility",
+            "visibility_rate": visibility_rate,
+            "signal": f"Only {visibility_rate:.0%} AI search visibility — low presence across AI engines",
+        })
+    for eng in engines:
+        if eng["total"] >= 5 and eng["visibility"] == 0:
+            signals.append({
+                "type": "zero_visibility_engine",
+                "engine": eng["engine"],
+                "signal": f"Zero citations on {eng['engine']} ({eng['total']} prompts tracked)",
+            })
+        elif eng["total"] >= 5 and eng["visibility"] < 0.10:
+            signals.append({
+                "type": "low_visibility_engine",
+                "engine": eng["engine"],
+                "visibility": eng["visibility"],
+                "signal": f"Only {eng['visibility']:.0%} visibility on {eng['engine']}",
+            })
+    if blind_spots:
+        signals.append({
+            "type": "blind_spots_found",
+            "count": len(blind_spots),
+            "signal": f"{len(blind_spots)} high-volume prompts where competitors appear but brand does not",
+        })
+
+    return {
+        "target": target,
+        "visibility_rate": visibility_rate,
+        "total_prompts": total,
+        "cited_prompts": cited,
+        "engine_breakdown": engines,
+        "top_blind_spots": blind_spots,
+        "signals": signals,
+    }
 
 
 def _build_summary(advertiser_name: str, country: str | None = None) -> dict:
@@ -404,10 +684,47 @@ def _build_summary(advertiser_name: str, country: str | None = None) -> dict:
             for row in session.execute(aso_type_q).all()
         }
 
+        # ── Category benchmarks ──────────────────────────────────────
+        _country = country or "US"
+        category_benchmarks = None
+        if advertiser.category:
+            # Get ALL client networks (not just top 8)
+            client_network_set: set[str] = set()
+            if latest_imp_date:
+                all_net_names = session.scalars(
+                    select(SensorTowerImpressionShareRecord.network)
+                    .where(SensorTowerImpressionShareRecord.advertiser_name == canonical_name)
+                    .where(SensorTowerImpressionShareRecord.country == _country)
+                    .where(SensorTowerImpressionShareRecord.period_date == latest_imp_date)
+                    .where(SensorTowerImpressionShareRecord.network.notin_(["all", "other"]))
+                    .where(SensorTowerImpressionShareRecord.sov_pct > 0)
+                ).all()
+                client_network_set = set(all_net_names)
+
+            category_benchmarks = _compute_category_benchmarks(
+                session,
+                category=advertiser.category,
+                country=_country,
+                client_downloads=latest_download.downloads if latest_download else None,
+                client_dau=_to_float(latest_usage.avg_dau) if latest_usage else None,
+                client_sov=_to_float(latest_impression_share.sov_pct) if latest_impression_share else None,
+                client_networks=client_network_set,
+            )
+
+        # ── GEO snapshot ─────────────────────────────────────────────
+        geo_snapshot = _compute_geo_snapshot(
+            session,
+            advertiser_name=canonical_name,
+            domain=advertiser.domain,
+            country=country,
+        )
+
     return {
         "found": True,
         **_resolved_info(advertiser),
         "advertiser": advertiser.model_dump(),
+        "category_benchmarks": category_benchmarks,
+        "geo_snapshot": geo_snapshot,
         "sensortower": {
             "latest_download": (
                 {
@@ -588,43 +905,45 @@ def create_mcp_server() -> FastMCP:
             "SENSORTOWER WORKFLOW:\n"
             "- Competitive comparison (2+ advertisers) → call get_full_comparison.\n"
             "  Returns 30-day timeseries for downloads and DAU, per-network SOV trends,\n"
-            "  and a server-computed gap_analysis covering: exclusive networks, SOV ratios,\n"
-            "  efficiency indicators, retention cohort gaps (d1/d7/d30/d60), review rating\n"
-            "  gaps, demographics skew comparison, and opportunity bullets.\n\n"
+            "  a server-computed gap_analysis (exclusive networks, SOV ratios, efficiency,\n"
+            "  retention gaps, review rating gaps, demographics comparison),\n"
+            "  PLUS per-advertiser category_benchmarks (percentile vs category median,\n"
+            "  missing popular networks) and geo_snapshot (AI search visibility per brand).\n"
+            "  The gap_analysis also includes geo_gaps: overall AI visibility leader,\n"
+            "  per-engine comparison, and GEO-specific opportunities.\n\n"
             "- Single advertiser deep dive → call get_advertiser_summary.\n"
-            "  Returns all latest data including:\n"
+            "  Returns all latest SensorTower data PLUS:\n"
+            "  · category_benchmarks: downloads/DAU/SOV percentile vs category median,\n"
+            "    network adoption rates, and signals (below_median, missing_popular_network)\n"
+            "  · geo_snapshot: AI search visibility rate, engine breakdown, top blind-spot\n"
+            "    prompts, and signals (low_visibility, zero_visibility_engine)\n"
             "  · impression_share: total SOV + top networks breakdown\n"
-            "  · reviews: aggregate ratings, sentiment distribution (positive/neutral/negative),\n"
-            "    top tags with counts, version breakdown (avg rating per app version), recent reviews\n"
-            "  · creatives: strategy summary (by type/network/duration, monthly cadence) + recent 5\n"
-            "  · aso_keywords: summary (total tracked, avg rank, by type) + top 20 keywords\n"
-            "  · latest_retention includes d1/d7/d30/d60 cohorts\n\n"
+            "  · reviews: aggregate ratings, sentiment distribution, top tags, version breakdown\n"
+            "  · creatives: strategy summary (by type/network/duration, monthly cadence)\n"
+            "  · aso_keywords: summary (total tracked, avg rank, by type) + top 20 keywords\n\n"
             "- Custom date range or individual metric → use get_metric_timeseries.\n"
             "  Metrics: downloads, usage, retention, impression_share, rankings, reviews.\n\n"
             "- Market-wide category rankings → call get_market_top_apps.\n"
             "  Sort by: downloads, revenue, dau, impression_share, rank.\n"
-            "  Optional filters:\n"
-            "  · network_filter: only apps advertising on that network (admob, facebook, instagram,\n"
-            "    tiktok, youtube, snapchat, applovin, unity, mintegral)\n"
-            "  · min_downloads: exclude apps below a download threshold\n"
-            "  · app_category: cross-category search (e.g. 'Finance' apps within Overall ranking)\n\n"
+            "  Filters: network_filter, min_downloads, app_category.\n\n"
             "- Custom analysis → call run_query with a SELECT statement.\n"
-            "  Call read_schema_text first to understand available tables and columns.\n"
-            "  Configurable limit up to 500 rows (default 100); read-only (SELECT/WITH only).\n\n"
+            "  Call read_schema_text first. Limit up to 500 rows; read-only (SELECT/WITH).\n\n"
             "GEO (AI SEARCH VISIBILITY) WORKFLOW:\n"
-            "- Single brand AI visibility → call get_geo_visibility_summary.\n"
-            "  Shows visibility rate, engine breakdown, sentiment, top cited domains.\n\n"
+            "- Single brand comprehensive GEO analysis → call get_geo_summary.\n"
+            "  Returns everything in one call: visibility rate + engine breakdown,\n"
+            "  sentiment distribution, citation analysis (top domains, categories, per-engine),\n"
+            "  prompt insights (top by volume, best ranked, blind spots, negative sentiment).\n\n"
             "- Compare 2+ brands in AI search → call compare_geo_visibility.\n"
             "  Shows blind spots, engine gaps, competitor overlap, opportunities.\n\n"
-            "- Citation deep dive → call get_geo_citation_analysis.\n"
-            "  Shows which URLs/domains get cited, brand vs third-party split, categories.\n\n"
-            "- Prompt/query analysis → call get_geo_prompt_insights.\n"
-            "  Shows top queries, ranking, blind-spot prompts where competitors win.\n\n"
+            "NOTE: get_advertiser_summary and get_full_comparison already include a GEO\n"
+            "snapshot with visibility rate, engine breakdown, blind spots, and signals.\n"
+            "Use get_geo_summary only when a deeper, standalone GEO analysis is needed.\n\n"
             "COLLECTION HEALTH:\n"
-            "- get_collection_health: check data freshness, failures, and active alerts in one call.\n"
+            "- get_collection_status: health + active alerts + recent run history in one call.\n"
             "  Pass advertiser_name to scope to one brand; omit for all brands.\n"
-            "  Tune stale_hours (default 48) and max_consecutive_failures (default 3).\n"
-            "- get_recent_collection_runs: inspect per-metric outcomes of past scrape runs.\n"
+            "  include_run_history (default True) adds per-metric scrape run outcomes.\n"
+            "  Filter runs by platform (e.g. 'sensortower'). Adjust run_history_limit (default 20).\n"
+            "  Tune alert thresholds: stale_hours (default 48), max_consecutive_failures (default 3).\n"
             "- list_advertisers: shows st_last_scraped, st_download_rows, geo_last_scraped per brand.\n\n"
             "COMPETITIVE GAP ANALYSIS REPORT FORMAT:\n"
             "1. Executive summary (who leads, by how much)\n"
@@ -853,18 +1172,24 @@ def create_mcp_server() -> FastMCP:
             return json.dumps({"error": str(exc)})
 
     @server.tool(
-        name="get_collection_health",
+        name="get_collection_status",
         description=(
-            "Get collection health for one advertiser or all advertisers. "
-            "Shows last successful run, consecutive failures, data staleness, and recent errors. "
-            "Always includes active alerts (stale data, consecutive failures, never-collected advertisers). "
-            "Use stale_hours and max_consecutive_failures to tune alert thresholds."
+            "Check collection health, active alerts, and recent run history in one call. "
+            "Returns: per-advertiser health (last success, consecutive failures, data staleness), "
+            "active alerts (stale data, consecutive failures, never-collected advertisers), "
+            "and recent scrape runs with per-metric outcomes (set include_run_history=False to skip). "
+            "Scope to one advertiser with advertiser_name, or omit for all brands. "
+            "Filter runs by platform (e.g. 'sensortower'). "
+            "Tune alert thresholds with stale_hours and max_consecutive_failures."
         ),
     )
-    def get_collection_health(
+    def get_collection_status(
         advertiser_name: str | None = None,
         stale_hours: float = 48,
         max_consecutive_failures: int = 3,
+        include_run_history: bool = True,
+        platform: str | None = None,
+        run_history_limit: int = 20,
     ) -> str:
         with _session_factory()() as session:
             repo = CollectionHealthRepository(session)
@@ -876,15 +1201,13 @@ def create_mcp_server() -> FastMCP:
                 stale_hours=stale_hours,
                 max_consecutive_failures=max_consecutive_failures,
             )
-            # Scope alerts to the requested advertiser when filtering
             if advertiser_name:
                 alerts = [
                     a for a in alerts
                     if a.get("advertiser_name") == advertiser_name
                 ]
-        return json.dumps(
-            {
-                "collection_health": health,
+
+            result: dict = {
                 "alerts": {
                     "active": alerts,
                     "alert_count": len(alerts),
@@ -893,29 +1216,18 @@ def create_mcp_server() -> FastMCP:
                         "max_consecutive_failures": max_consecutive_failures,
                     },
                 },
-            },
-            indent=2,
-        )
+                "health": health,
+            }
 
-    @server.tool(
-        name="get_recent_collection_runs",
-        description=(
-            "Get recent collection runs saved in the server database, including persisted result metadata "
-            "such as records written and per-metric outcomes."
-        ),
-    )
-    def get_recent_collection_runs(
-        advertiser_name: str | None = None,
-        platform: str | None = None,
-        limit: int = 20,
-    ) -> str:
-        with _session_factory()() as session:
-            runs = ScrapeRunRepository(session).list_recent(
-                advertiser_name=advertiser_name,
-                platform=platform,
-                limit=max(1, min(limit, 100)),
-            )
-        return json.dumps({"runs": [_serialize_scrape_run(row) for row in runs]}, indent=2)
+            if include_run_history:
+                runs = ScrapeRunRepository(session).list_recent(
+                    advertiser_name=advertiser_name,
+                    platform=platform,
+                    limit=max(1, min(run_history_limit, 100)),
+                )
+                result["recent_runs"] = [_serialize_scrape_run(row) for row in runs]
+
+        return json.dumps(result, indent=2)
 
     @server.tool(
         name="get_metric_timeseries",
@@ -1124,6 +1436,27 @@ def create_mcp_server() -> FastMCP:
                         networks_map[net]["trend"], key=lambda x: x["date"]
                     )[-days:]
 
+                # ── GEO snapshot for this advertiser ──────────────────
+                geo_snap = _compute_geo_snapshot(
+                    session, canonical_name, advertiser.domain, country
+                )
+
+                # ── Category benchmarks for this advertiser ───────────
+                client_net_set = {
+                    net for net, v in networks_map.items() if v["latest_sov"] > 0
+                }
+                cat_bench = None
+                if advertiser.category:
+                    cat_bench = _compute_category_benchmarks(
+                        session,
+                        category=advertiser.category,
+                        country=country,
+                        client_downloads=snapshot["downloads"],
+                        client_dau=snapshot["avg_dau"],
+                        client_sov=snapshot["total_sov"],
+                        client_networks=client_net_set,
+                    )
+
                 advertiser_data[canonical_name] = {
                     "found": True,
                     **_resolved_info(advertiser),
@@ -1137,6 +1470,8 @@ def create_mcp_server() -> FastMCP:
                         "total_sov": snapshot["total_sov"],
                         "network_count": len(networks_map),
                     },
+                    "geo_snapshot": geo_snap,
+                    "category_benchmarks": cat_bench,
                 }
 
         # ── Gap analysis (computed across all advertisers) ─────────────
@@ -1253,6 +1588,63 @@ def create_mcp_server() -> FastMCP:
                             "skew": "male-skewed" if total_male > total_female else "female-skewed",
                         })
 
+            # GEO visibility gap analysis
+            geo_gaps: dict = {}
+            geo_data = {
+                n: d["geo_snapshot"]
+                for n, d in found.items()
+                if d.get("geo_snapshot")
+            }
+            if len(geo_data) >= 2:
+                vis_rates = {n: g["visibility_rate"] for n, g in geo_data.items()}
+                geo_leader = max(vis_rates, key=lambda n: vis_rates[n])
+                geo_follower = min(vis_rates, key=lambda n: vis_rates[n])
+                gap = vis_rates[geo_leader] - vis_rates[geo_follower]
+
+                # Per-engine comparison: who leads on each engine?
+                all_engines: set[str] = set()
+                for g in geo_data.values():
+                    for eng in g["engine_breakdown"]:
+                        all_engines.add(eng["engine"])
+
+                engine_comparison: dict[str, dict] = {}
+                for engine in sorted(all_engines):
+                    engine_vals: dict[str, float] = {}
+                    for n, g in geo_data.items():
+                        for eng in g["engine_breakdown"]:
+                            if eng["engine"] == engine:
+                                engine_vals[n] = eng["visibility"]
+                    if len(engine_vals) >= 2:
+                        leader = max(engine_vals, key=lambda x: engine_vals[x])
+                        engine_comparison[engine] = {
+                            "leader": leader,
+                            "rates": engine_vals,
+                        }
+
+                # GEO-specific opportunities
+                geo_opportunities: list[str] = []
+                for n, g in geo_data.items():
+                    for eng in g["engine_breakdown"]:
+                        if eng["total"] >= 5 and eng["visibility"] == 0:
+                            geo_opportunities.append(
+                                f"{n} has zero AI visibility on {eng['engine']} ({eng['total']} prompts tracked)"
+                            )
+                    if g.get("top_blind_spots"):
+                        geo_opportunities.append(
+                            f"{n} has {len(g['top_blind_spots'])} high-volume blind-spot prompts where competitors appear"
+                        )
+
+                geo_gaps = {
+                    "overall": {
+                        "leader": geo_leader,
+                        "rates": vis_rates,
+                        "gap": round(gap, 4),
+                        "insight": f"{geo_leader} leads AI visibility by {gap:.0%} over {geo_follower}",
+                    },
+                    "engine_comparison": engine_comparison,
+                    "opportunities": geo_opportunities,
+                }
+
             gap_analysis = {
                 "network_coverage": {
                     n: {"exclusive": exclusive[n], "shared_with_others": sorted(shared)}
@@ -1274,6 +1666,7 @@ def create_mcp_server() -> FastMCP:
                 "retention_gap": retention_gap,
                 "review_rating_gap": rating_gap,
                 "demographics_comparison": demographics_gap,
+                "geo_gaps": geo_gaps,
                 "opportunities": opportunities,
             }
 
@@ -1555,29 +1948,35 @@ def create_mcp_server() -> FastMCP:
         return [
             {
                 "domain": row.cited_domain,
-                "total_citations": row.total_citations or 0,
+                "total_citations": _to_float(row.total_citations) or 0,
                 "appearances": row.appearances,
-                "brand_mentioned_count": row.brand_mentions or 0,
+                "brand_mentioned_count": _to_float(row.brand_mentions) or 0,
             }
             for row in rows
         ]
 
     @server.tool(
-        name="get_geo_visibility_summary",
+        name="get_geo_summary",
         description=(
-            "Single-advertiser GEO (Generative Engine Optimization) overview. "
-            "Shows how visible this brand is across AI engines (ChatGPT, Perplexity, Gemini, etc.), "
-            "including visibility rate, sentiment, ranking, and top cited domains. "
-            "Use for understanding a brand's AI search presence."
+            "Comprehensive single-advertiser GEO (Generative Engine Optimization) analysis. "
+            "Returns everything about a brand's AI search presence in one call: "
+            "visibility rate and engine breakdown (ChatGPT, Perplexity, Gemini, etc.), "
+            "sentiment distribution, top cited domains with categories, "
+            "per-engine citation patterns, top prompts by volume, "
+            "blind-spot prompts (where competitors appear but brand doesn't), "
+            "and negative-sentiment prompts. Use for any single-brand GEO analysis."
         ),
     )
-    def get_geo_visibility_summary(
+    def get_geo_summary(
         advertiser_name: str,
         country: str | None = None,
+        limit: int = 20,
     ) -> str:
+        limit = max(1, min(limit, 100))
         with _session_factory()() as session:
             advertiser_name = _resolve_geo_target(session, advertiser_name)
-            # Aggregate overview via SQL instead of loading all rows
+
+            # ── Visibility overview ──────────────────────────────────
             overview_q = (
                 select(
                     func.count().label("total"),
@@ -1602,23 +2001,174 @@ def create_mcp_server() -> FastMCP:
             cited = stats.cited or 0
             engine_breakdown = _geo_engine_breakdown(session, advertiser_name, country)
             sentiment_dist = _geo_sentiment_distribution(session, advertiser_name, country)
-            top_domains = _geo_top_cited_domains(session, advertiser_name, country)
+            top_domains = _geo_top_cited_domains(session, advertiser_name, country, limit=limit)
+
+            # ── Citation analysis ────────────────────────────────────
+            cit_overview_q = (
+                select(
+                    func.count().label("total"),
+                    func.sum(case((OtterlyCitationRecord.brand_mentioned.is_(True), 1), else_=0)).label("brand_mentioned"),
+                )
+                .where(OtterlyCitationRecord.target_brand_or_domain_name == advertiser_name)
+            )
+            if country:
+                cit_overview_q = cit_overview_q.where(OtterlyCitationRecord.country_code == country.lower())
+            cit_stats = session.execute(cit_overview_q).one()
+            cit_total = cit_stats.total or 0
+            brand_mentioned_count = cit_stats.brand_mentioned or 0
+
+            # Per-engine citation counts
+            cit_engine_breakdown: list[dict] = []
+            if cit_total > 0:
+                cit_engine_q = (
+                    select(
+                        OtterlyCitationRecord.ai_engine,
+                        func.count().label("citation_rows"),
+                        func.sum(OtterlyCitationRecord.citation_count).label("total_citations"),
+                        func.sum(case((OtterlyCitationRecord.brand_mentioned.is_(True), 1), else_=0)).label("brand_mentions"),
+                    )
+                    .where(OtterlyCitationRecord.target_brand_or_domain_name == advertiser_name)
+                    .group_by(OtterlyCitationRecord.ai_engine)
+                )
+                if country:
+                    cit_engine_q = cit_engine_q.where(OtterlyCitationRecord.country_code == country.lower())
+                cit_engine_rows = session.execute(cit_engine_q).all()
+                cit_engine_breakdown = [
+                    {
+                        "ai_engine": row.ai_engine,
+                        "citation_rows": row.citation_rows,
+                        "total_citations": _to_float(row.total_citations) or 0,
+                        "brand_mentioned_count": _to_float(row.brand_mentions) or 0,
+                    }
+                    for row in sorted(cit_engine_rows, key=lambda r: r.total_citations or 0, reverse=True)
+                ]
+
+            # Domain category distribution
+            cat_q = (
+                select(
+                    OtterlyCitationRecord.domain_category,
+                    func.count().label("cnt"),
+                    func.sum(OtterlyCitationRecord.citation_count).label("total_citations"),
+                )
+                .where(OtterlyCitationRecord.target_brand_or_domain_name == advertiser_name)
+                .where(OtterlyCitationRecord.domain_category.isnot(None))
+                .group_by(OtterlyCitationRecord.domain_category)
+                .order_by(func.sum(OtterlyCitationRecord.citation_count).desc())
+                .limit(15)
+            )
+            if country:
+                cat_q = cat_q.where(OtterlyCitationRecord.country_code == country.lower())
+            category_distribution = [
+                {"category": row.domain_category, "count": row.cnt, "total_citations": _to_float(row.total_citations) or 0}
+                for row in session.execute(cat_q).all()
+            ]
+
+            # Competitors appearing in citations
+            comp_q = (
+                select(OtterlyCitationRecord.competitors)
+                .where(OtterlyCitationRecord.target_brand_or_domain_name == advertiser_name)
+                .where(OtterlyCitationRecord.competitors.isnot(None))
+            )
+            if country:
+                comp_q = comp_q.where(OtterlyCitationRecord.country_code == country.lower())
+            all_competitors: dict[str, int] = {}
+            for comp_list in session.scalars(comp_q).all():
+                for comp in (comp_list or []):
+                    all_competitors[comp] = all_competitors.get(comp, 0) + 1
+
+            # ── Prompt insights ──────────────────────────────────────
+            prompt_q = (
+                select(OtterlyPromptRecord)
+                .where(OtterlyPromptRecord.target_brand_or_domain_name == advertiser_name)
+            )
+            if country:
+                prompt_q = prompt_q.where(OtterlyPromptRecord.country_code == country.lower())
+            all_prompts = session.scalars(prompt_q).all()
+
+            # Top prompts by volume
+            with_volume = [p for p in all_prompts if p.prompt_volume is not None]
+            top_prompts = [
+                {
+                    "prompt": p.prompt_text,
+                    "volume": p.prompt_volume,
+                    "rank": p.target_rank,
+                    "cited": p.domain_cited,
+                    "ai_engine": p.ai_engine,
+                    "sentiment": p.sentiment_label,
+                }
+                for p in sorted(with_volume, key=lambda p: p.prompt_volume or 0, reverse=True)[:limit]
+            ]
+
+            # Best ranked prompts
+            with_rank = [p for p in all_prompts if p.target_rank is not None and p.target_rank > 0]
+            best_ranked_prompts = [
+                {
+                    "prompt": p.prompt_text,
+                    "rank": p.target_rank,
+                    "volume": p.prompt_volume,
+                    "ai_engine": p.ai_engine,
+                    "cited": p.domain_cited,
+                }
+                for p in sorted(with_rank, key=lambda p: p.target_rank)[:limit]
+            ]
+
+            # Blind spots: not cited but competitors present
+            blind_spots = [p for p in all_prompts if not p.domain_cited and (p.competitors or [])]
+            blind_spot_prompts = [
+                {
+                    "prompt": p.prompt_text,
+                    "volume": p.prompt_volume,
+                    "ai_engine": p.ai_engine,
+                    "competitors_present": p.competitors,
+                    "sentiment": p.sentiment_label,
+                }
+                for p in sorted(blind_spots, key=lambda p: p.prompt_volume or 0, reverse=True)[:limit]
+            ]
+
+            # Negative sentiment prompts
+            negative = [p for p in all_prompts if p.sentiment_label == "negative"]
+            negative_prompts = [
+                {
+                    "prompt": p.prompt_text,
+                    "volume": p.prompt_volume,
+                    "ai_engine": p.ai_engine,
+                    "sentiment_score": _to_float(p.sentiment_score),
+                }
+                for p in sorted(negative, key=lambda p: p.prompt_volume or 0, reverse=True)[:10]
+            ]
 
         return json.dumps({
             "advertiser_name": advertiser_name,
             "country": country,
-            "date_range": {
-                "earliest": stats.earliest.isoformat() if stats.earliest else None,
-                "latest": stats.latest.isoformat() if stats.latest else None,
-            },
-            "overview": {
+            "visibility": {
+                "date_range": {
+                    "earliest": stats.earliest.isoformat() if stats.earliest else None,
+                    "latest": stats.latest.isoformat() if stats.latest else None,
+                },
                 "total_prompts_tracked": total,
                 "prompts_where_cited": cited,
                 "visibility_rate": round(cited / total, 4) if total > 0 else 0,
             },
             "engine_breakdown": engine_breakdown,
             "sentiment_distribution": sentiment_dist,
-            "top_cited_domains": top_domains,
+            "citations": {
+                "total_citation_rows": cit_total,
+                "brand_mentioned_count": brand_mentioned_count,
+                "brand_mention_rate": round(brand_mentioned_count / cit_total, 4) if cit_total > 0 else 0,
+                "top_cited_domains": top_domains,
+                "per_engine": cit_engine_breakdown,
+                "category_distribution": category_distribution,
+                "competitors_in_citations": dict(
+                    sorted(all_competitors.items(), key=lambda x: x[1], reverse=True)[:10]
+                ),
+            },
+            "prompts": {
+                "total": len(all_prompts),
+                "top_by_volume": top_prompts,
+                "best_ranked": best_ranked_prompts,
+                "blind_spots": blind_spot_prompts,
+                "negative_sentiment": negative_prompts,
+            },
         }, indent=2)
 
     @server.tool(
@@ -1754,225 +2304,6 @@ def create_mcp_server() -> FastMCP:
             "gap_analysis": gap_analysis,
         }, indent=2)
 
-    @server.tool(
-        name="get_geo_citation_analysis",
-        description=(
-            "Deep dive into which URLs and domains are getting cited in AI responses for a brand. "
-            "Shows top cited domains, brand-owned vs third-party split, domain categories, "
-            "and per-engine citation patterns. Use for citation strategy and content gap analysis."
-        ),
-    )
-    def get_geo_citation_analysis(
-        advertiser_name: str,
-        country: str | None = None,
-        limit: int = 20,
-    ) -> str:
-        limit = max(1, min(limit, 100))
-        with _session_factory()() as session:
-            advertiser_name = _resolve_geo_target(session, advertiser_name)
-            # Aggregate overview via SQL
-            overview_q = (
-                select(
-                    func.count().label("total"),
-                    func.sum(case((OtterlyCitationRecord.brand_mentioned.is_(True), 1), else_=0)).label("brand_mentioned"),
-                )
-                .where(OtterlyCitationRecord.target_brand_or_domain_name == advertiser_name)
-            )
-            if country:
-                overview_q = overview_q.where(OtterlyCitationRecord.country_code == country.lower())
-
-            stats = session.execute(overview_q).one()
-            total = stats.total or 0
-            if total == 0:
-                return json.dumps({
-                    "found": False,
-                    "advertiser_name": advertiser_name,
-                    "message": "No Otterly citation data found for this advertiser.",
-                })
-
-            brand_mentioned_count = stats.brand_mentioned or 0
-
-            # Top domains
-            top_domains = _geo_top_cited_domains(session, advertiser_name, country, limit=limit)
-
-            # Per-engine citation counts
-            engine_q = (
-                select(
-                    OtterlyCitationRecord.ai_engine,
-                    func.count().label("citation_rows"),
-                    func.sum(OtterlyCitationRecord.citation_count).label("total_citations"),
-                    func.sum(case((OtterlyCitationRecord.brand_mentioned.is_(True), 1), else_=0)).label("brand_mentions"),
-                )
-                .where(OtterlyCitationRecord.target_brand_or_domain_name == advertiser_name)
-                .group_by(OtterlyCitationRecord.ai_engine)
-            )
-            if country:
-                engine_q = engine_q.where(OtterlyCitationRecord.country_code == country.lower())
-            engine_rows = session.execute(engine_q).all()
-            engine_breakdown = [
-                {
-                    "ai_engine": row.ai_engine,
-                    "citation_rows": row.citation_rows,
-                    "total_citations": row.total_citations or 0,
-                    "brand_mentioned_count": row.brand_mentions or 0,
-                }
-                for row in sorted(engine_rows, key=lambda r: r.total_citations or 0, reverse=True)
-            ]
-
-            # Domain category distribution
-            cat_q = (
-                select(
-                    OtterlyCitationRecord.domain_category,
-                    func.count().label("cnt"),
-                    func.sum(OtterlyCitationRecord.citation_count).label("total_citations"),
-                )
-                .where(OtterlyCitationRecord.target_brand_or_domain_name == advertiser_name)
-                .where(OtterlyCitationRecord.domain_category.isnot(None))
-                .group_by(OtterlyCitationRecord.domain_category)
-                .order_by(func.sum(OtterlyCitationRecord.citation_count).desc())
-                .limit(15)
-            )
-            if country:
-                cat_q = cat_q.where(OtterlyCitationRecord.country_code == country.lower())
-            cat_rows = session.execute(cat_q).all()
-            category_distribution = [
-                {"category": row.domain_category, "count": row.cnt, "total_citations": row.total_citations or 0}
-                for row in cat_rows
-            ]
-
-            # Load only competitors JSON column for aggregation
-            comp_q = (
-                select(OtterlyCitationRecord.competitors)
-                .where(OtterlyCitationRecord.target_brand_or_domain_name == advertiser_name)
-                .where(OtterlyCitationRecord.competitors.isnot(None))
-            )
-            if country:
-                comp_q = comp_q.where(OtterlyCitationRecord.country_code == country.lower())
-            comp_rows = session.scalars(comp_q).all()
-
-            all_competitors: dict[str, int] = {}
-            for comp_list in comp_rows:
-                for comp in (comp_list or []):
-                    all_competitors[comp] = all_competitors.get(comp, 0) + 1
-
-        return json.dumps({
-            "advertiser_name": advertiser_name,
-            "country": country,
-            "overview": {
-                "total_citation_rows": total,
-                "brand_mentioned_count": brand_mentioned_count,
-                "brand_mention_rate": round(brand_mentioned_count / total, 4) if total > 0 else 0,
-            },
-            "top_cited_domains": top_domains,
-            "engine_breakdown": engine_breakdown,
-            "category_distribution": category_distribution,
-            "competitors_in_citations": dict(
-                sorted(all_competitors.items(), key=lambda x: x[1], reverse=True)[:10]
-            ),
-        }, indent=2)
-
-    @server.tool(
-        name="get_geo_prompt_insights",
-        description=(
-            "Analyze the prompts/queries where a brand appears (or doesn't) in AI search. "
-            "Shows top prompts by volume, prompts where brand ranks well vs poorly, "
-            "blind-spot prompts where competitors appear but the brand doesn't, "
-            "and sentiment distribution. Use for GEO content strategy."
-        ),
-    )
-    def get_geo_prompt_insights(
-        advertiser_name: str,
-        country: str | None = None,
-        limit: int = 20,
-    ) -> str:
-        limit = max(1, min(limit, 100))
-        with _session_factory()() as session:
-            advertiser_name = _resolve_geo_target(session, advertiser_name)
-            base_q = select(OtterlyPromptRecord).where(
-                OtterlyPromptRecord.target_brand_or_domain_name == advertiser_name
-            )
-            if country:
-                base_q = base_q.where(OtterlyPromptRecord.country_code == country.lower())
-
-            all_prompts = session.scalars(base_q).all()
-            if not all_prompts:
-                return json.dumps({
-                    "found": False,
-                    "advertiser_name": advertiser_name,
-                    "message": "No Otterly prompt data found for this advertiser.",
-                })
-
-            # Top prompts by volume
-            with_volume = [p for p in all_prompts if p.prompt_volume is not None]
-            top_by_volume = sorted(with_volume, key=lambda p: p.prompt_volume or 0, reverse=True)[:limit]
-            top_prompts = [
-                {
-                    "prompt": p.prompt_text,
-                    "volume": p.prompt_volume,
-                    "rank": p.target_rank,
-                    "cited": p.domain_cited,
-                    "ai_engine": p.ai_engine,
-                    "sentiment": p.sentiment_label,
-                }
-                for p in top_by_volume
-            ]
-
-            # Best ranked prompts (lowest rank = best)
-            with_rank = [p for p in all_prompts if p.target_rank is not None and p.target_rank > 0]
-            best_ranked = sorted(with_rank, key=lambda p: p.target_rank)[:limit]
-            best_ranked_prompts = [
-                {
-                    "prompt": p.prompt_text,
-                    "rank": p.target_rank,
-                    "volume": p.prompt_volume,
-                    "ai_engine": p.ai_engine,
-                    "cited": p.domain_cited,
-                }
-                for p in best_ranked
-            ]
-
-            # Blind spots: high-volume prompts where brand is NOT cited but competitors are present
-            blind_spots = [
-                p for p in all_prompts
-                if not p.domain_cited and (p.competitors or [])
-            ]
-            blind_spots_sorted = sorted(blind_spots, key=lambda p: p.prompt_volume or 0, reverse=True)[:limit]
-            blind_spot_prompts = [
-                {
-                    "prompt": p.prompt_text,
-                    "volume": p.prompt_volume,
-                    "ai_engine": p.ai_engine,
-                    "competitors_present": p.competitors,
-                    "sentiment": p.sentiment_label,
-                }
-                for p in blind_spots_sorted
-            ]
-
-            # Negative sentiment prompts
-            negative = [p for p in all_prompts if p.sentiment_label == "negative"]
-            negative_sorted = sorted(negative, key=lambda p: p.prompt_volume or 0, reverse=True)[:10]
-            negative_prompts = [
-                {
-                    "prompt": p.prompt_text,
-                    "volume": p.prompt_volume,
-                    "ai_engine": p.ai_engine,
-                    "sentiment_score": _to_float(p.sentiment_score),
-                }
-                for p in negative_sorted
-            ]
-
-            sentiment_dist = _geo_sentiment_distribution(session, advertiser_name, country)
-
-        return json.dumps({
-            "advertiser_name": advertiser_name,
-            "country": country,
-            "total_prompts": len(all_prompts),
-            "top_prompts_by_volume": top_prompts,
-            "best_ranked_prompts": best_ranked_prompts,
-            "blind_spot_prompts": blind_spot_prompts,
-            "negative_sentiment_prompts": negative_prompts,
-            "sentiment_distribution": sentiment_dist,
-        }, indent=2)
 
     @server.tool(
         name="get_geo_data_availability",

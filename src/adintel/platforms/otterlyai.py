@@ -15,7 +15,7 @@ import yaml
 from playwright.async_api import BrowserContext, Page, async_playwright
 
 from adintel.core.settings import get_settings
-from adintel.db.repositories import OtterlyRepository
+from adintel.db.repositories import AdvertiserRepository, OtterlyRepository, ScrapeRunRepository
 from adintel.db.session import build_session_factory
 from adintel.platforms.otterlyai_parsers import normalize_engine_label, refine_citation_rows, refine_prompt_rows
 
@@ -618,6 +618,13 @@ async def collect_batch(
             settings = get_settings()
             session_factory = build_session_factory(settings)
             with session_factory() as session:
+                advertisers = AdvertiserRepository(session).list()
+                advertiser_name_by_target = {
+                    target: adv.name
+                    for adv in advertisers
+                    for target in (adv.domain, adv.name)
+                    if target
+                }
                 repo = OtterlyRepository(session)
                 prompt_count = repo.upsert_prompts(batch_rows["prompts"])
                 citation_count = repo.upsert_citations(batch_rows["citations"])
@@ -625,6 +632,41 @@ async def collect_batch(
                     f"[otterly] Upserted prompts={prompt_count} citations={citation_count} into database",
                     flush=True,
                 )
+
+                # Record one scrape run per brand for collection health tracking
+                run_repo = ScrapeRunRepository(session)
+                advertisers_seen: set[str] = set()
+                for summary in summaries:
+                    brand = summary["brand"]
+                    advertiser_name = advertiser_name_by_target.get(brand, brand)
+                    if advertiser_name in advertisers_seen:
+                        continue
+                    advertisers_seen.add(advertiser_name)
+
+                    brand_summaries = [
+                        s for s in summaries
+                        if advertiser_name_by_target.get(s["brand"], s["brand"]) == advertiser_name
+                    ]
+                    ok_count = sum(1 for s in brand_summaries if s.get("status") == "ok")
+                    err_count = sum(1 for s in brand_summaries if s.get("status") == "error")
+                    total_prompts = sum(s.get("prompt_rows", 0) for s in brand_summaries)
+                    total_citations = sum(s.get("citation_rows", 0) for s in brand_summaries)
+
+                    run = run_repo.start(advertiser_name=advertiser_name, platform="otterlyai")
+                    if ok_count > 0:
+                        run_repo.finish(
+                            run,
+                            status="success" if err_count == 0 else "partial",
+                            message=f"prompts={total_prompts} citations={total_citations} services_ok={ok_count} services_err={err_count}",
+                            metadata={"prompt_rows": total_prompts, "citation_rows": total_citations},
+                        )
+                    else:
+                        first_err = next((s.get("error") for s in brand_summaries if s.get("error")), "Unknown error")
+                        run_repo.finish(
+                            run,
+                            status="error",
+                            message=first_err,
+                        )
         print(f"[otterly] Batch complete: summaries={len(summaries)}", flush=True)
         return summaries
     finally:

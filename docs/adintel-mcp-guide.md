@@ -11,11 +11,12 @@ AdIntel MCP is a read-only advertiser intelligence interface backed by a shared 
 ## What AdIntel Can Do
 
 - **List advertisers** — see every app currently tracked in AdIntel
-- **Summarize an advertiser** — get the latest Sensor Tower snapshot including downloads, DAU, retention, impression share, rankings, demographics, reviews, creatives, and ASO keywords
-- **Compare advertisers** — side-by-side latest metric comparison across two or more apps
+- **Summarize an advertiser** — get the latest Sensor Tower snapshot including downloads, DAU, retention, impression share, rankings, demographics, reviews, creatives, ASO keywords, category benchmarks, and GEO snapshot data
+- **Compare advertisers** — full side-by-side comparison across two or more apps with trends, SOV, computed gap analysis, category benchmarks, and GEO snapshot data
 - **Explore historical trends** — daily time-series data for up to 90 days per metric
-- **Check data health** — staleness, consecutive failures, and collection alerts for any advertiser
-- **Inspect collection runs** — recent run history with status, timing, and records written
+- **Check collection status** — health, alerts, and recent run history for any advertiser
+- **Analyze GEO visibility** — AI search visibility, citations, prompt blind spots, and engine-by-engine breakdowns
+- **Compare GEO visibility** — side-by-side GEO comparison across multiple advertisers
 - **Request new advertisers** — log onboarding requests so the team can prioritize them
 - **Read the schema** — retrieve the canonical SQL schema for reference
 
@@ -235,7 +236,7 @@ Antigravity stores MCP server config in a JSON file. You can edit it through the
 
 Ask Antigravity: *"What tools do you have access to?"*
 
-You should see all AdIntel tools listed — `list_advertisers`, `get_advertiser_summary`, `compare_advertisers`, and more.
+You should see all AdIntel tools listed — `list_advertisers`, `get_advertiser_summary`, `get_full_comparison`, `get_collection_status`, `get_geo_summary`, and more.
 
 ---
 
@@ -265,28 +266,28 @@ Lists all advertisers currently stored in AdIntel, including catalog metadata an
 
 ### `get_advertiser_summary`
 
-Returns the latest Sensor Tower snapshot for one advertiser: downloads, DAU, retention, impression share, rankings, demographics, reviews, review texts, creatives, and ASO keywords.
+Returns the latest Sensor Tower snapshot for one advertiser: downloads, DAU, retention, impression share, rankings, demographics, reviews, review texts, creatives, and ASO keywords. Also includes category benchmarks and a lightweight GEO snapshot when available.
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `advertiser_name` | string | required | Exact advertiser name from catalog |
 | `country` | string | `null` | ISO country code to filter results (e.g. `"US"`) |
 
-**Returns:** Full latest snapshot across all available Sensor Tower data domains.
+**Returns:** Full latest snapshot across all available Sensor Tower data domains, plus `category_benchmarks` and `geo_snapshot` when available.
 
 ---
 
-### `compare_advertisers`
+### `get_full_comparison`
 
-Returns the latest value for a single metric across two or more advertisers, side by side.
+Returns a full competitive comparison for two or more advertisers: downloads and DAU trends, per-network ad impression share, category benchmarks, GEO snapshots, and a computed gap analysis.
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `advertiser_names` | string | required | Comma-separated advertiser names (e.g. `"Binance, Coinbase"`) |
-| `metric` | string | `"downloads"` | One of: `downloads`, `usage`, `retention`, `impression_share`, `rankings`, `reviews` |
 | `country` | string | `"US"` | ISO country code |
+| `days` | integer | `30` | Timeseries window for downloads, DAU, and network trends (max 90) |
 
-**Returns:** Latest metric snapshot per advertiser with date and values.
+**Returns:** Per-advertiser snapshots, downloads/DAU timeseries, ad placement by network, `category_benchmarks`, `geo_snapshot`, and a computed `gap_analysis`.
 
 ---
 
@@ -307,42 +308,78 @@ Returns daily historical data for a supported metric, for one advertiser, up to 
 
 ---
 
-### `get_collection_health`
+### `get_market_top_apps`
 
-Shows data freshness, last successful run, consecutive failures, and recent error messages for one advertiser or all advertisers.
+Returns market-wide ranked apps in a category — all apps, not just tracked advertisers.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `category` | string | `"Finance"` | Category name or numeric ID |
+| `country` | string | `"US"` | ISO country code |
+| `sort_by` | string | `"downloads"` | One of: `rank`, `downloads`, `revenue`, `dau`, `impression_share` |
+| `limit` | integer | `20` | Maximum number of rows (max 100) |
+| `scrape_month` | string | `null` | Specific month filter (`YYYY-MM-DD`) |
+| `network_filter` | string | `null` | Only show apps advertising on a specific network such as `"tiktok"` |
+| `min_downloads` | integer | `null` | Exclude apps below a download threshold |
+| `app_category` | string | `null` | Cross-category filter using the app's primary category |
+
+**Returns:** Ranked list of apps with downloads, revenue, DAU, impression share, and ad-network presence flags.
+
+---
+
+### `get_collection_status`
+
+Shows collection health, active alerts, and recent run history for one advertiser or all advertisers.
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `advertiser_name` | string | `null` | Specific advertiser, or omit for all |
-
-**Returns:** Health status per advertiser including `hours_since_success`, `consecutive_failures`, and last error.
-
----
-
-### `get_collection_alerts`
-
-Surfaces active alerts: stale data, repeated failures, and advertisers that have never successfully collected.
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
 | `stale_hours` | number | `48` | Threshold in hours to flag data as stale |
 | `max_consecutive_failures` | integer | `3` | Threshold to flag repeated failures |
+| `include_run_history` | boolean | `true` | Whether to include recent scrape runs in the response |
+| `platform` | string | `null` | Optional run-history filter by platform |
+| `run_history_limit` | integer | `20` | Number of recent runs to return (max 100) |
 
-**Returns:** List of active alerts with severity (`critical` / `warning`) and alert type.
+**Returns:** Combined payload with `health`, active `alerts`, threshold settings, and optional `recent_runs`.
 
 ---
 
-### `get_recent_collection_runs`
+### `get_geo_summary`
 
-Returns recent collection job history including run status, timestamps, and per-metric records written.
+Returns comprehensive GEO analysis for a single advertiser across AI search engines.
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `advertiser_name` | string | `null` | Filter by advertiser, or omit for all |
-| `platform` | string | `null` | Filter by platform (e.g. `"sensortower"`) |
+| `advertiser_name` | string | required | Tracked advertiser name or matching domain |
+| `country` | string | `null` | Optional ISO country code filter |
 | `limit` | integer | `20` | Number of runs to return (max 100) |
 
-**Returns:** Array of run records with `status`, `started_at`, `finished_at`, `message`, and metadata.
+**Returns:** GEO visibility overview, engine breakdown, sentiment distribution, top cited domains, citation categories, top prompts by volume, blind spots, and negative-sentiment prompts.
+
+---
+
+### `compare_geo_visibility`
+
+Returns side-by-side GEO visibility comparison for two or more advertisers.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `advertiser_names` | string | required | Comma-separated advertiser names |
+| `country` | string | `null` | Optional ISO country code filter |
+
+**Returns:** GEO comparison with visibility gaps, engine-by-engine differences, competitor overlap, and opportunities.
+
+---
+
+### `get_geo_data_availability`
+
+Shows what GEO data is available and how complete it is.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `advertiser_name` | string | `null` | Optional advertiser filter, or omit for all tracked GEO brands |
+
+**Returns:** GEO brand coverage, engines tracked, countries covered, date range, row counts, and field completeness gaps.
 
 ---
 
@@ -384,6 +421,18 @@ Returns the full canonical SQL schema for the AdIntel database. Useful for under
 
 ---
 
+### `run_query`
+
+Executes a read-only `SELECT` or `WITH` query against the AdIntel database.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `sql` | string | required | A read-only `SELECT` or `WITH` statement |
+
+**Returns:** JSON with `columns`, `rows`, `row_count`, and `truncated`.
+
+---
+
 ## Sample Questions
 
 ### Discovery
@@ -396,15 +445,21 @@ Returns the full canonical SQL schema for the AdIntel database. Useful for under
 
 > "Compare MonopolyGo and ScrabbleGo. Pull 30-day download trends, DAU, revenue, and ad impression share for each. Which ad networks does MonopolyGo run on that ScrabbleGo doesn't? Where is the biggest gap in coverage?"
 
-> "For Binance, Coinbase, and Kraken in the US, compare the latest downloads and usage metrics. Tell me which looks strongest, show the 30-day trend, and flag any data health issues or stale data."
+> "For Binance, Coinbase, and Kraken in the US, compare the latest downloads and usage metrics. Tell me which looks strongest, show the 30-day trend, and flag any collection-status issues or stale data."
 
 > "Which finance apps in AdIntel have the highest impression share on TikTok? Which ones have zero presence there?"
 
+### GEO Analysis
+
+> "Give me a GEO summary for Chime: visibility rate, top cited domains, engine breakdown, and biggest blind spots."
+
+> "Compare GEO visibility for Binance, Coinbase, and Kraken. Which brand wins overall, and where are the engine-by-engine gaps?"
+
 ### Operations & Health
 
-> "Which advertisers have stale data or repeated collection failures? Show severity."
+> "Which advertisers have stale data or repeated collection failures? Show severity, recent run history, and how long since the last successful run."
 
-> "Show me the last 5 collection runs for MonopolyGo and tell me if any failed or had partial results."
+> "Show me the collection status for MonopolyGo and include the last 5 runs. Tell me if any failed or had partial results."
 
 ---
 
@@ -424,12 +479,15 @@ AdIntel exposes the following Sensor Tower data domains:
 | **Review Texts** | `body`, `sentiment`, `tags` | review date, country |
 | **Creatives** | `creative_type`, `network`, `thumbnail_url` | first seen date |
 | **ASO Keywords** | `rank`, `traffic_score`, `opportunity_score` | country, device |
+| **Market Top Apps** | `rank`, `downloads`, `revenue`, `dau`, `impression_share`, ad-network flags | scrape month, country, category, OS |
 
 **Notes:**
-- `get_metric_timeseries` and `compare_advertisers` support: `downloads`, `usage`, `retention`, `impression_share`, `rankings`, `reviews`
-- `get_advertiser_summary` surfaces all domains for one advertiser at once
+- `get_metric_timeseries` supports: `downloads`, `usage`, `retention`, `impression_share`, `rankings`, `reviews`
+- `get_advertiser_summary` surfaces all advertiser domains at once and may include `category_benchmarks` and `geo_snapshot`
+- `get_full_comparison` adds computed gap analysis across 2+ advertisers
+- `get_market_top_apps` covers all apps in a category (not just tracked ones)
 - Most advertisers are tracked for **US** only; Binance is also tracked for TR, BR, and NG
-- Data coverage varies by advertiser — check `get_collection_health` if results look sparse
+- Data coverage varies by advertiser — check `get_collection_status` or `get_geo_data_availability` if results look sparse
 
 ---
 
@@ -477,7 +535,8 @@ AdIntel exposes the following Sensor Tower data domains:
 
 ## Notes for Teammates
 
-- Use advertiser names **exactly as they appear** in the catalog (case-sensitive matching)
+- Advertiser matching is fuzzy — typos and close matches often resolve automatically, but the server will suggest alternatives if a name is ambiguous
 - If an advertiser is missing, use `request_advertiser` to keep the onboarding queue visible to the whole team
-- If results look empty or sparse, check `get_collection_health` before assuming no data exists — the advertiser may have a recent collection failure
+- If results look empty or sparse, check `get_collection_status` before assuming no data exists — the advertiser may have a recent collection failure
 - The MCP is read-only — it reflects what is already in the shared database, nothing more
+- Use `run_query` together with `read_schema_text` for ad-hoc analysis not covered by the built-in tools

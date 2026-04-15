@@ -156,6 +156,7 @@ def test_get_alerts_includes_never_collected_advertisers() -> None:
     } == {
         ("Chime", "sensortower", "never_collected"),
         ("Chime", "adclarity", "never_collected"),
+        ("Chime", "otterlyai", "never_collected"),
     }
 
 
