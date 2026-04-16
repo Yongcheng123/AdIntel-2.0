@@ -5,9 +5,6 @@ advertisers:
   countries:
   - US
   platforms:
-    adclarity:
-      advertiser_id: '35120415'
-      brand_id: '2470'
     sensortower:
       unified_app_id: 55d93e4402ac645ad20fc82a
       publisher_id: 55f8915b8ac350426b02e967
@@ -22,8 +19,6 @@ advertisers:
   - BR
   - NG
   platforms:
-    adclarity:
-      advertiser_id: '19535698'
     sensortower:
       unified_app_id: 59f26235179f4f62e549db39
       publisher_id: 59f26235179f4f62e549db38
@@ -35,7 +30,6 @@ advertisers:
   countries:
   - US
   platforms:
-    adclarity: {}
     sensortower:
       unified_app_id: 55d3a1a302ac64350a000bc2
       publisher_id: 
@@ -46,7 +40,6 @@ advertisers:
   countries:
   - US
   platforms:
-    adclarity: {}
     sensortower:
       unified_app_id: 55af035d9abaa8151307af24
       publisher_id: 
@@ -58,7 +51,6 @@ advertisers:
   countries:
   - US
   platforms:
-    adclarity: {}
     sensortower:
       unified_app_id: 54e8fff40f122550510026dd
       publisher_id: 
@@ -70,7 +62,6 @@ advertisers:
   countries:
   - US
   platforms:
-    adclarity: {}
     sensortower:
       unified_app_id: 5f09e992d871ea7bfa1d261b
       publisher_id: 
@@ -82,7 +73,6 @@ advertisers:
   countries:
   - US
   platforms:
-    adclarity: {}
     sensortower:
       unified_app_id: 577c9fa40211a6cf30000056
       publisher_id: 
@@ -94,7 +84,6 @@ advertisers:
   countries:
   - US
   platforms:
-    adclarity: {}
     sensortower:
       unified_app_id: 5f16a8019f7b275235017614
       publisher_id: 
@@ -106,7 +95,6 @@ advertisers:
   countries:
   - US
   platforms:
-    adclarity: {}
     sensortower:
       unified_app_id: 56aeb27302ac64713d000002
       publisher_id: 
@@ -118,7 +106,6 @@ advertisers:
   countries:
   - US
   platforms:
-    adclarity: {}
     sensortower:
       unified_app_id: 5f7507d3dbcdf6195491db76
       publisher_id: 

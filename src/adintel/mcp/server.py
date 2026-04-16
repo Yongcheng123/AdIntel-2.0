@@ -14,6 +14,7 @@ from adintel.db.models import (
     OtterlyCitationRecord,
     OtterlyPromptRecord,
     RequestedAdvertiserRecord,
+    ScrapeRunRecord,
     SensorTowerAsoKeywordRecord,
     SensorTowerCreativeRecord,
     SensorTowerDemographicRecord,
@@ -76,6 +77,99 @@ def _to_float(val):
     if hasattr(val, "__float__"):
         return float(val)
     return val
+
+
+def _build_data_availability(session, advertiser_name: str | None = None) -> dict:
+    advertisers = AdvertiserRepository(session).list()
+    if advertiser_name:
+        advertisers = [adv for adv in advertisers if adv.name == advertiser_name]
+
+    st_freshness_q = (
+        select(
+            ScrapeRunRecord.advertiser_name,
+            func.max(ScrapeRunRecord.finished_at).label("last_scraped"),
+            func.count().label("total_runs"),
+        )
+        .where(ScrapeRunRecord.platform == "sensortower")
+        .where(ScrapeRunRecord.status.in_(["success", "partial"]))
+        .group_by(ScrapeRunRecord.advertiser_name)
+    )
+    st_freshness = {
+        row.advertiser_name: {
+            "last_scraped": row.last_scraped.isoformat() if row.last_scraped else None,
+            "total_runs": row.total_runs,
+        }
+        for row in session.execute(st_freshness_q).all()
+    }
+
+    st_download_counts = {
+        row.advertiser_name: row.row_count
+        for row in session.execute(
+            select(
+                SensorTowerDownloadRecord.advertiser_name,
+                func.count().label("row_count"),
+            ).group_by(SensorTowerDownloadRecord.advertiser_name)
+        ).all()
+    }
+
+    geo_prompt_stats = {
+        row.target_brand_or_domain_name: {
+            "prompt_rows": row.prompt_rows,
+            "last_scraped": row.last_scraped.isoformat() if row.last_scraped else None,
+        }
+        for row in session.execute(
+            select(
+                OtterlyPromptRecord.target_brand_or_domain_name,
+                func.count().label("prompt_rows"),
+                func.max(OtterlyPromptRecord.scraped_at).label("last_scraped"),
+            ).group_by(OtterlyPromptRecord.target_brand_or_domain_name)
+        ).all()
+    }
+    geo_citation_counts = {
+        row.target_brand_or_domain_name: row.citation_rows
+        for row in session.execute(
+            select(
+                OtterlyCitationRecord.target_brand_or_domain_name,
+                func.count().label("citation_rows"),
+            ).group_by(OtterlyCitationRecord.target_brand_or_domain_name)
+        ).all()
+    }
+
+    rows: list[dict] = []
+    for advertiser in advertisers:
+        geo_key = advertiser.domain or advertiser.name
+        st_run = st_freshness.get(advertiser.name, {})
+        st_download_rows = st_download_counts.get(advertiser.name, 0)
+        geo_prompt = geo_prompt_stats.get(geo_key, {})
+        geo_citation_rows = geo_citation_counts.get(geo_key, 0)
+
+        rows.append({
+            "advertiser_name": advertiser.name,
+            "domain": advertiser.domain,
+            "sensortower": {
+                "has_data": bool(st_run.get("total_runs") or st_download_rows),
+                "last_scraped": st_run.get("last_scraped"),
+                "successful_runs": st_run.get("total_runs", 0),
+                "download_rows": st_download_rows,
+            },
+            "geo_otterly": {
+                "has_data": bool(geo_prompt.get("prompt_rows") or geo_citation_rows),
+                "last_scraped": geo_prompt.get("last_scraped"),
+                "prompt_rows": geo_prompt.get("prompt_rows", 0),
+                "citation_rows": geo_citation_rows,
+            },
+        })
+
+    return {
+        "summary": {
+            "tracked_advertisers": len(rows),
+            "sensortower_available": sum(1 for row in rows if row["sensortower"]["has_data"]),
+            "geo_otterly_available": sum(1 for row in rows if row["geo_otterly"]["has_data"]),
+            "missing_sensortower": [row["advertiser_name"] for row in rows if not row["sensortower"]["has_data"]],
+            "missing_geo_otterly": [row["advertiser_name"] for row in rows if not row["geo_otterly"]["has_data"]],
+        },
+        "advertisers": rows,
+    }
 
 
 # Maps metric names to (model, date_column, value_columns) for time-series queries
@@ -1174,12 +1268,13 @@ def create_mcp_server() -> FastMCP:
     @server.tool(
         name="get_collection_status",
         description=(
-            "Check collection health, active alerts, and recent run history in one call. "
+            "Check collection health, active alerts, recent run history, and platform data availability in one call. "
             "Returns: per-advertiser health (last success, consecutive failures, data staleness), "
             "active alerts (stale data, consecutive failures, never-collected advertisers), "
+            "a per-advertiser availability matrix for SensorTower and Otterly GEO, "
             "and recent scrape runs with per-metric outcomes (set include_run_history=False to skip). "
             "Scope to one advertiser with advertiser_name, or omit for all brands. "
-            "Filter runs by platform (e.g. 'sensortower'). "
+            "Filter runs by platform (e.g. 'sensortower' or 'otterlyai'). "
             "Tune alert thresholds with stale_hours and max_consecutive_failures."
         ),
     )
@@ -1216,6 +1311,7 @@ def create_mcp_server() -> FastMCP:
                         "max_consecutive_failures": max_consecutive_failures,
                     },
                 },
+                "data_availability": _build_data_availability(session, advertiser_name=advertiser_name),
                 "health": health,
             }
 
@@ -1958,7 +2054,7 @@ def create_mcp_server() -> FastMCP:
     @server.tool(
         name="get_geo_summary",
         description=(
-            "Comprehensive single-advertiser GEO (Generative Engine Optimization) analysis. "
+            "Comprehensive single-advertiser GEO (Generative Engine Optimization) analysis using Otterly.AI-backed GEO data. "
             "Returns everything about a brand's AI search presence in one call: "
             "visibility rate and engine breakdown (ChatGPT, Perplexity, Gemini, etc.), "
             "sentiment distribution, top cited domains with categories, "
@@ -2308,7 +2404,7 @@ def create_mcp_server() -> FastMCP:
     @server.tool(
         name="get_geo_data_availability",
         description=(
-            "Check what GEO (Otterly) data is available in the database. "
+            "Check what GEO (Otterly.AI-backed) data is available in the database. "
             "Shows which brands have data, which AI engines are covered, date range, "
             "row counts, and field completeness gaps. Use this before running any GEO "
             "analysis to understand data coverage."

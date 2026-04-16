@@ -18,8 +18,6 @@ class AdvertiserRecord(Base):
     domain: Mapped[str | None] = mapped_column(String(255), nullable=True)
     category: Mapped[str | None] = mapped_column(String(255), nullable=True)
     countries_csv: Mapped[str] = mapped_column(String(255), default="US")
-    adclarity_advertiser_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    adclarity_brand_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     sensortower_unified_app_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     sensortower_publisher_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     sensortower_ios_app_id: Mapped[str | None] = mapped_column(String(255), nullable=True)

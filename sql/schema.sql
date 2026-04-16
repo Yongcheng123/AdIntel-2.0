@@ -15,8 +15,6 @@ CREATE TABLE IF NOT EXISTS advertisers (
   domain VARCHAR(255),
   category VARCHAR(255),
   countries_csv VARCHAR(255) NOT NULL DEFAULT 'US',
-  adclarity_advertiser_id VARCHAR(255),
-  adclarity_brand_id VARCHAR(255),
   sensortower_unified_app_id VARCHAR(255),
   sensortower_publisher_id VARCHAR(255),
   sensortower_ios_app_id VARCHAR(255),
@@ -298,3 +296,9 @@ CREATE INDEX IF NOT EXISTS idx_st_market_top_apps_category ON sensortower_market
 -- that already exists.
 ALTER TABLE scrape_runs
 ADD COLUMN IF NOT EXISTS metadata JSONB;
+
+ALTER TABLE advertisers
+DROP COLUMN IF EXISTS adclarity_advertiser_id;
+
+ALTER TABLE advertisers
+DROP COLUMN IF EXISTS adclarity_brand_id;

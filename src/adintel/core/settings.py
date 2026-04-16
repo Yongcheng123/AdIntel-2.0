@@ -29,7 +29,6 @@ class AppSettings(BaseSettings):
     browser_channel: str = "chromium"
     default_headless: bool = False
     collect_timeout_ms: int = 60_000
-    adclarity_base_url: str = "https://pro.adclarity.com"
     sensortower_base_url: str = "https://app.sensortower.com"
 
     # Alerting

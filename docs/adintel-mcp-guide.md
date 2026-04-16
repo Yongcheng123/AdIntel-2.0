@@ -6,6 +6,18 @@ AdIntel MCP is a read-only advertiser intelligence interface backed by a shared 
 
 > **Note:** The MCP is read-only. It queries already-collected data. No data collection runs through this endpoint.
 
+## Data Sources
+
+- **SensorTower** powers app intelligence. Use it for downloads, DAU, retention, rankings, reviews, ASO, creatives, and market/category benchmarking.
+- **Otterly.AI** powers GEO intelligence. Use it for AI-search visibility, citations, prompt blind spots, and engine-by-engine GEO coverage.
+- **AdClarity** is not part of the active AdIntel product right now. If it returns later, it should be treated as a future ad-intelligence layer, not assumed to overlap 1:1 with SensorTower or Otterly.
+
+Simple rule:
+
+- `SensorTower` = app performance and app market data
+- `Otterly` = GEO / AI-search visibility
+- `AdClarity` = future ad-intelligence option if we later need deeper media-buying visibility
+
 ---
 
 ## What AdIntel Can Do

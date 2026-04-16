@@ -48,7 +48,7 @@ def _session_factory():
 
 def _platforms(value: str) -> list[PlatformName]:
     if value == "all":
-        return [PlatformName.ADCLARITY, PlatformName.SENSORTOWER]
+        return [PlatformName.SENSORTOWER]
     return [PlatformName(value)]
 
 
@@ -156,8 +156,6 @@ def upsert_advertiser(
     domain: str | None = typer.Option(None, help="Company domain."),
     category: str | None = typer.Option(None, help="Category label."),
     countries: str = typer.Option("US", help="Comma-separated country codes."),
-    adclarity_advertiser_id: str | None = typer.Option(None, help="AdClarity advertiser ID."),
-    adclarity_brand_id: str | None = typer.Option(None, help="AdClarity brand ID."),
     sensortower_unified_app_id: str | None = typer.Option(None, help="SensorTower unified app ID."),
     sensortower_publisher_id: str | None = typer.Option(None, help="SensorTower publisher ID."),
     sensortower_ios_app_id: str | None = typer.Option(None, help="SensorTower iOS app ID."),
@@ -170,10 +168,6 @@ def upsert_advertiser(
             "category": category,
             "countries": [country.strip().upper() for country in countries.split(",") if country.strip()],
             "platforms": {
-                "adclarity": {
-                    "advertiser_id": adclarity_advertiser_id,
-                    "brand_id": adclarity_brand_id,
-                },
                 "sensortower": {
                     "unified_app_id": sensortower_unified_app_id,
                     "publisher_id": sensortower_publisher_id,

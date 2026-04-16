@@ -10,9 +10,6 @@ advertisers:
         publisher_id: "55f8915b8ac350426b02e967"
         ios_app_id: "836215269"
         android_package: "com.onedebit.chime"
-      adclarity:
-        advertiser_id: "35120415"
-        brand_id: "2470"
 
   - name: Binance
     domain: binance.com
@@ -31,5 +28,3 @@ advertisers:
           TR: "1663707109"
         android_package: "com.binance.dev"
         android_packages_by_country: {}
-      adclarity:
-        advertiser_id: "19535698"

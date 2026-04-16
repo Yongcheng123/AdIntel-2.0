@@ -11,7 +11,6 @@ from adintel.core.browser import BrowserManager
 from adintel.core.models import AdvertiserProfile, CollectorRunRequest, CollectorRunResult, PlatformName
 from adintel.core.settings import AppSettings
 from adintel.db.repositories import CollectionHealthRepository, ScrapeRunRepository
-from adintel.platforms.adclarity import AdClarityCollector
 from adintel.platforms.sensortower import SensorTowerCollector
 
 
@@ -21,7 +20,6 @@ class CollectorService:
         self.session = session
         browser = BrowserManager(settings)
         self.collectors = {
-            PlatformName.ADCLARITY: AdClarityCollector(settings, browser, session),
             PlatformName.SENSORTOWER: SensorTowerCollector(settings, browser, session),
         }
         self.runs = ScrapeRunRepository(session)

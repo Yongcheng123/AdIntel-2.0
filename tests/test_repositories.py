@@ -130,7 +130,6 @@ def test_get_health_for_advertiser_returns_all_platforms() -> None:
     session.add_all(
         [
             ScrapeRunRecord(advertiser_name="Chime", platform="sensortower", status="success"),
-            ScrapeRunRecord(advertiser_name="Chime", platform="adclarity", status="error", message="boom"),
         ]
     )
     session.commit()
@@ -138,10 +137,7 @@ def test_get_health_for_advertiser_returns_all_platforms() -> None:
     repo = CollectionHealthRepository(session)
     health = repo.get_health_for_advertiser("Chime")
 
-    assert {(row["platform"], row["last_success_at"] is not None) for row in health} == {
-        ("sensortower", True),
-        ("adclarity", False),
-    }
+    assert {(row["platform"], row["last_success_at"] is not None) for row in health} == {("sensortower", True)}
 
 
 def test_get_alerts_includes_never_collected_advertisers() -> None:
@@ -157,7 +153,6 @@ def test_get_alerts_includes_never_collected_advertisers() -> None:
         for alert in alerts
     } == {
         ("Chime", "sensortower", "never_collected"),
-        ("Chime", "adclarity", "never_collected"),
         ("Chime", "otterlyai", "never_collected"),
     }
 

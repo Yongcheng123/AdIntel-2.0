@@ -86,7 +86,6 @@ def test_get_collection_status_for_advertiser_includes_health_and_recent_runs(mo
         session.add_all(
             [
                 ScrapeRunRecord(advertiser_name="Chime", platform="sensortower", status="success"),
-                ScrapeRunRecord(advertiser_name="Chime", platform="adclarity", status="error", message="boom"),
             ]
         )
         session.commit()
@@ -97,8 +96,10 @@ def test_get_collection_status_for_advertiser_includes_health_and_recent_runs(mo
     result = asyncio.run(server.call_tool("get_collection_status", {"advertiser_name": "Chime"}))
     payload = decode_tool_result(result)
 
-    assert {row["platform"] for row in payload["health"]} == {"sensortower", "adclarity"}
-    assert len(payload["recent_runs"]) == 2
+    assert {row["platform"] for row in payload["health"]} == {"sensortower"}
+    assert len(payload["recent_runs"]) == 1
+    assert payload["data_availability"]["advertisers"][0]["advertiser_name"] == "Chime"
+    assert payload["data_availability"]["advertisers"][0]["sensortower"]["has_data"] is True
     assert payload["alerts"]["thresholds"]["stale_hours"] == 48
 
 
@@ -114,13 +115,6 @@ def test_get_collection_status_filters_recent_runs_by_platform(monkeypatch) -> N
                     status="success",
                     message="Collected SensorTower core metrics.",
                     result_metadata={"records_written": 7},
-                ),
-                ScrapeRunRecord(
-                    advertiser_name="Chime",
-                    platform="adclarity",
-                    status="success",
-                    message="Collected AdClarity data.",
-                    result_metadata={"records_written": 3},
                 ),
             ]
         )
@@ -140,6 +134,35 @@ def test_get_collection_status_filters_recent_runs_by_platform(monkeypatch) -> N
     assert len(payload["recent_runs"]) == 1
     assert payload["recent_runs"][0]["platform"] == "sensortower"
     assert payload["recent_runs"][0]["metadata"]["records_written"] == 7
+
+
+def test_get_collection_status_includes_otterly_availability_matrix(monkeypatch) -> None:
+    session_factory = build_sqlite_session_factory()
+    with session_factory() as session:
+        session.add(AdvertiserRecord(name="Chime", domain="chime.com", countries_csv="US"))
+        session.add(
+            OtterlyPromptRecord(
+                target_brand_or_domain_name="chime.com",
+                country_code="us",
+                query_window_start_date=date(2026, 3, 5),
+                query_window_end_date=date(2026, 4, 6),
+                prompt_text="Best online checking accounts",
+                ai_engine="ChatGPT",
+                domain_cited=True,
+            )
+        )
+        session.commit()
+
+    monkeypatch.setattr(mcp_server, "_session_factory", lambda: session_factory)
+    server = create_mcp_server()
+
+    result = asyncio.run(server.call_tool("get_collection_status", {"advertiser_name": "Chime"}))
+    payload = decode_tool_result(result)
+
+    availability = payload["data_availability"]["advertisers"][0]
+    assert availability["advertiser_name"] == "Chime"
+    assert availability["geo_otterly"]["has_data"] is True
+    assert availability["geo_otterly"]["prompt_rows"] == 1
 
 
 def test_get_geo_summary_returns_combined_visibility_citation_and_prompt_views(monkeypatch) -> None:

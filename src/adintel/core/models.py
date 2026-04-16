@@ -7,7 +7,6 @@ from pydantic import BaseModel, Field, field_validator
 
 
 class PlatformName(StrEnum):
-    ADCLARITY = "adclarity"
     SENSORTOWER = "sensortower"
 
 
@@ -45,7 +44,6 @@ class PlatformIdentifiers(BaseModel):
 
 
 class AdvertiserPlatforms(BaseModel):
-    adclarity: PlatformIdentifiers = Field(default_factory=PlatformIdentifiers)
     sensortower: PlatformIdentifiers = Field(default_factory=PlatformIdentifiers)
 
 

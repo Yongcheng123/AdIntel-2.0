@@ -36,10 +36,6 @@ def _to_profile(record: AdvertiserRecord) -> AdvertiserProfile:
             "category": record.category,
             "countries": [c for c in record.countries_csv.split(",") if c],
             "platforms": {
-                "adclarity": {
-                    "advertiser_id": record.adclarity_advertiser_id,
-                    "brand_id": record.adclarity_brand_id,
-                },
                 "sensortower": {
                     "unified_app_id": record.sensortower_unified_app_id,
                     "publisher_id": record.sensortower_publisher_id,
@@ -152,8 +148,6 @@ class AdvertiserRepository:
         record.domain = advertiser.domain
         record.category = advertiser.category
         record.countries_csv = ",".join(advertiser.countries or ["US"])
-        record.adclarity_advertiser_id = advertiser.platforms.adclarity.advertiser_id
-        record.adclarity_brand_id = advertiser.platforms.adclarity.brand_id
         record.sensortower_unified_app_id = advertiser.platforms.sensortower.unified_app_id
         record.sensortower_publisher_id = advertiser.platforms.sensortower.publisher_id
         record.sensortower_ios_app_id = advertiser.platforms.sensortower.ios_app_id
@@ -442,7 +436,7 @@ class CollectionHealthRepository:
             for (p,) in self.session.execute(
                 select(ScrapeRunRecord.platform).distinct()
             ).all()
-        } | {"sensortower", "adclarity", "otterlyai"}
+        } | {"sensortower", "otterlyai"}
         for platform in sorted(known_platforms):
             for advertiser_name in self.get_stale_advertisers(platform, stale_hours=stale_hours):
                 if any(

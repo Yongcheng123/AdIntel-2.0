@@ -90,10 +90,6 @@ def _extract_profile(entity: dict, request: dict) -> AdvertiserProfile:
                     "ios_app_id": _string_or_none(primary_ios.get("app_id")),
                     "android_package": _string_or_none(primary_android.get("app_id")),
                 },
-                "adclarity": {
-                    "advertiser_id": _string_or_none(request.get("adclarity_advertiser_id")),
-                    "brand_id": _string_or_none(request.get("adclarity_brand_id")),
-                },
             },
         }
     )
