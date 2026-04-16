@@ -1,4 +1,5 @@
 import asyncio
+from datetime import date
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -10,6 +11,7 @@ from adintel.collectors.service import CollectorService
 from adintel.core.settings import AppSettings
 from adintel.core.models import AdvertiserProfile, PlatformName
 from adintel.db.models import AdvertiserRecord, Base, ScrapeRunRecord, SensorTowerRetentionRecord
+from adintel.db.models import OtterlyPromptRecord
 from adintel.db.session import ensure_schema
 from adintel.db.repositories import CollectionHealthRepository, ScrapeRunRepository, _bulk_upsert
 
@@ -157,6 +159,31 @@ def test_get_alerts_includes_never_collected_advertisers() -> None:
         ("Chime", "sensortower", "never_collected"),
         ("Chime", "adclarity", "never_collected"),
         ("Chime", "otterlyai", "never_collected"),
+    }
+
+
+def test_get_alerts_skips_otterly_never_collected_when_geo_rows_exist() -> None:
+    session = build_sqlite_session()
+    session.add(AdvertiserRecord(name="Chime", domain="chime.com"))
+    session.add(
+        OtterlyPromptRecord(
+            target_brand_or_domain_name="chime.com",
+            country_code="us",
+            query_window_start_date=date(2026, 4, 1),
+            query_window_end_date=date(2026, 4, 7),
+            prompt_text="best checking accounts",
+            ai_engine="ChatGPT",
+            domain_cited=True,
+        )
+    )
+    session.commit()
+
+    repo = CollectionHealthRepository(session)
+    alerts = repo.get_alerts()
+
+    assert ("Chime", "otterlyai", "never_collected") not in {
+        (alert["advertiser_name"], alert["platform"], alert["alert_type"])
+        for alert in alerts
     }
 
 

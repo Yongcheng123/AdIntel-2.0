@@ -354,6 +354,8 @@ class CollectionHealthRepository:
             ).all()
         }
         collected_names = {name for (name,) in pairs}
+        if platform == "otterlyai":
+            collected_names |= self._otterly_collected_advertisers(all_advertiser_names)
         never_collected = all_advertiser_names - collected_names
 
         stale = list(never_collected)
@@ -363,6 +365,46 @@ class CollectionHealthRepository:
                 stale.append(name)
 
         return sorted(stale)
+
+    def _otterly_collected_advertisers(self, advertiser_names: set[str]) -> set[str]:
+        """Return advertisers that already have GEO rows even if no scrape-run row exists."""
+        if not advertiser_names:
+            return set()
+
+        advertisers = self.session.scalars(
+            select(AdvertiserRecord).where(AdvertiserRecord.name.in_(advertiser_names))
+        ).all()
+
+        target_to_name: dict[str, str] = {}
+        for advertiser in advertisers:
+            target_to_name[advertiser.name] = advertiser.name
+            if advertiser.domain:
+                target_to_name[advertiser.domain] = advertiser.name
+
+        if not target_to_name:
+            return set()
+
+        prompt_targets = set(
+            self.session.scalars(
+                select(OtterlyPromptRecord.target_brand_or_domain_name)
+                .where(OtterlyPromptRecord.target_brand_or_domain_name.in_(target_to_name.keys()))
+                .distinct()
+            ).all()
+        )
+        citation_targets = set(
+            self.session.scalars(
+                select(OtterlyCitationRecord.target_brand_or_domain_name)
+                .where(OtterlyCitationRecord.target_brand_or_domain_name.in_(target_to_name.keys()))
+                .distinct()
+            ).all()
+        )
+
+        matched_targets = prompt_targets | citation_targets
+        return {
+            target_to_name[target]
+            for target in matched_targets
+            if target in target_to_name
+        }
 
     def get_alerts(self, *, stale_hours: float = 48, max_consecutive_failures: int = 3) -> list[dict]:
         """Return active alerts based on staleness and failure thresholds."""
