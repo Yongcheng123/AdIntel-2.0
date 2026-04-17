@@ -8,7 +8,7 @@ from collections import Counter
 
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
-from sqlalchemy import case, desc, func, or_, select
+from sqlalchemy import case, desc, func, or_, select, text
 
 from adintel.core.competitor_groups import build_competitor_run_plan, load_competitor_groups
 from adintel.core.settings import ROOT_DIR, get_settings
@@ -861,23 +861,25 @@ def _build_summary(advertiser_name: str, country: str | None = None) -> dict:
             for row in session.execute(review_sentiment_q).all()
         }
 
-        # Top review tags with frequency counts
-        all_tags_q = (
-            select(SensorTowerReviewTextRecord.tags)
+        # Top review tags — unnest in SELECT, group by ordinal to avoid full table scan in Python
+        top_tags_q = (
+            select(
+                func.unnest(SensorTowerReviewTextRecord.tags).label("tag"),
+                func.count().label("cnt"),
+            )
             .where(SensorTowerReviewTextRecord.advertiser_name == canonical_name)
             .where(SensorTowerReviewTextRecord.tags.isnot(None))
+            .group_by(text("1"))
+            .order_by(desc(text("2")))
+            .limit(10)
         )
         if country:
-            all_tags_q = all_tags_q.where(
+            top_tags_q = top_tags_q.where(
                 SensorTowerReviewTextRecord.country == country
             )
-        tag_counts: dict[str, int] = {}
-        for (tags,) in session.execute(all_tags_q).all():
-            for tag in (tags or []):
-                tag_counts[tag] = tag_counts.get(tag, 0) + 1
         top_tags = [
-            {"tag": t, "count": c}
-            for t, c in sorted(tag_counts.items(), key=lambda x: x[1], reverse=True)[:10]
+            {"tag": row.tag, "count": row.cnt}
+            for row in session.execute(top_tags_q).all()
         ]
 
         # Version breakdown: avg rating per app_version (last 5 versions by recency)
@@ -960,19 +962,20 @@ def _build_summary(advertiser_name: str, country: str | None = None) -> dict:
         }
 
         # Monthly creative launch cadence (last 6 months)
+        # Use to_char to avoid date_trunc ambiguity on Date columns
         creative_cadence_q = (
             select(
-                func.date_trunc("month", SensorTowerCreativeRecord.first_seen).label("month"),
+                func.to_char(SensorTowerCreativeRecord.first_seen, "YYYY-MM").label("month"),
                 func.count().label("cnt"),
             )
             .where(SensorTowerCreativeRecord.advertiser_name == canonical_name)
             .where(SensorTowerCreativeRecord.first_seen.isnot(None))
-            .group_by(func.date_trunc("month", SensorTowerCreativeRecord.first_seen))
-            .order_by(func.date_trunc("month", SensorTowerCreativeRecord.first_seen).desc())
+            .group_by(func.to_char(SensorTowerCreativeRecord.first_seen, "YYYY-MM"))
+            .order_by(func.to_char(SensorTowerCreativeRecord.first_seen, "YYYY-MM").desc())
             .limit(6)
         )
         creative_cadence = [
-            {"month": row.month.strftime("%Y-%m") if row.month else None, "new_creatives": row.cnt}
+            {"month": row.month, "new_creatives": row.cnt}
             for row in session.execute(creative_cadence_q).all()
         ]
         creative_cadence.reverse()  # chronological order
@@ -1834,31 +1837,39 @@ def create_mcp_server() -> FastMCP:
                 usage_series = _build_timeseries(session, canonical_name, "usage", country, days)
 
                 # ── Per-network impression share ───────────────────────
-                imp_rows = session.scalars(
-                    select(SensorTowerImpressionShareRecord)
+                # Aggregate in SQL: latest SOV + 7-day average per network
+                # Avoids returning hundreds of daily rows per network
+                cutoff_7d = func.current_date() - text("interval '7 days'")
+                net_agg_rows = session.execute(
+                    select(
+                        SensorTowerImpressionShareRecord.network,
+                        func.max(SensorTowerImpressionShareRecord.sov_pct).label("latest_sov"),
+                        func.max(SensorTowerImpressionShareRecord.period_date).label("latest_date"),
+                        func.avg(
+                            case(
+                                (SensorTowerImpressionShareRecord.period_date >= cutoff_7d,
+                                 SensorTowerImpressionShareRecord.sov_pct),
+                                else_=None,
+                            )
+                        ).label("avg_sov_7d"),
+                    )
                     .where(SensorTowerImpressionShareRecord.advertiser_name == canonical_name)
                     .where(SensorTowerImpressionShareRecord.country == country)
-                    .where(SensorTowerImpressionShareRecord.network != "all")
-                    .where(SensorTowerImpressionShareRecord.network != "other")
-                    .order_by(desc(SensorTowerImpressionShareRecord.period_date))
-                    .limit(days * 20)  # enough rows for all networks × days
+                    .where(SensorTowerImpressionShareRecord.network.notin_(["all", "other"]))
+                    .where(SensorTowerImpressionShareRecord.period_date >= func.current_date() - text(f"interval '{days} days'"))
+                    .group_by(SensorTowerImpressionShareRecord.network)
+                    .order_by(desc("latest_sov"))
                 ).all()
 
-                # Group by network → latest SOV + recent trend
-                networks_map: dict[str, dict] = {}
-                for row in imp_rows:
-                    net = row.network
-                    sov = _to_float(row.sov_pct) or 0.0
-                    dt = row.period_date.isoformat()
-                    if net not in networks_map:
-                        networks_map[net] = {"latest_sov": sov, "latest_date": dt, "trend": []}
-                    networks_map[net]["trend"].append({"date": dt, "sov_pct": sov})
-
-                # Trim trend to `days` entries and sort chronologically
-                for net in networks_map:
-                    networks_map[net]["trend"] = sorted(
-                        networks_map[net]["trend"], key=lambda x: x["date"]
-                    )[-days:]
+                networks_map: dict[str, dict] = {
+                    row.network: {
+                        "latest_sov": _to_float(row.latest_sov) or 0.0,
+                        "latest_date": row.latest_date.isoformat() if row.latest_date else None,
+                        "avg_sov_7d": _to_float(row.avg_sov_7d),
+                    }
+                    for row in net_agg_rows
+                    if (_to_float(row.latest_sov) or 0.0) > 0
+                }
 
                 # ── GEO snapshot for this advertiser ──────────────────
                 geo_snap = _compute_geo_snapshot(
