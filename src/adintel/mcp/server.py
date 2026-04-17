@@ -962,20 +962,19 @@ def _build_summary(advertiser_name: str, country: str | None = None) -> dict:
         }
 
         # Monthly creative launch cadence (last 6 months)
-        # Group by year-month via date_trunc on cast to timestamp, then format in Python
+        # Extract year/month as integers, group by year+month integer to avoid function duplication
+        year_month = (func.extract("year", SensorTowerCreativeRecord.first_seen).cast(text("integer")) * 100
+                     + func.extract("month", SensorTowerCreativeRecord.first_seen).cast(text("integer"))).label("ym")
         creative_cadence_q = (
-            select(
-                func.date_trunc("month", func.cast(SensorTowerCreativeRecord.first_seen, text("timestamp"))).label("month"),
-                func.count().label("cnt"),
-            )
+            select(year_month, func.count().label("cnt"))
             .where(SensorTowerCreativeRecord.advertiser_name == canonical_name)
             .where(SensorTowerCreativeRecord.first_seen.isnot(None))
-            .group_by(func.date_trunc("month", func.cast(SensorTowerCreativeRecord.first_seen, text("timestamp"))))
-            .order_by(func.date_trunc("month", func.cast(SensorTowerCreativeRecord.first_seen, text("timestamp"))).desc())
+            .group_by(year_month)
+            .order_by(year_month.desc())
             .limit(6)
         )
         creative_cadence = [
-            {"month": row.month.strftime("%Y-%m") if row.month else None, "new_creatives": row.cnt}
+            {"month": f"{int(row.ym // 100)}-{int(row.ym % 100):02d}", "new_creatives": row.cnt}
             for row in session.execute(creative_cadence_q).all()
         ]
         creative_cadence.reverse()  # chronological order
