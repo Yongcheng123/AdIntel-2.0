@@ -25,11 +25,21 @@ class AppSettings(BaseSettings):
     auto_apply_schema: bool = True
     state_dir: Path = ROOT_DIR / "state"
     config_file: Path = ROOT_DIR / "config" / "advertisers.yaml"
+    socialpeta_group_config_file: Path = ROOT_DIR / "config" / "socialpeta_groups.yaml"
     cdp_url: str = "http://127.0.0.1:9222"
     browser_channel: str = "chromium"
     default_headless: bool = False
     collect_timeout_ms: int = 60_000
     sensortower_base_url: str = "https://app.sensortower.com"
+    socialpeta_jitter_enabled: bool = True
+    socialpeta_page_jitter_min_s: float = 0.6
+    socialpeta_page_jitter_max_s: float = 1.6
+    socialpeta_target_jitter_min_s: float = 1.2
+    socialpeta_target_jitter_max_s: float = 3.0
+
+    appfollow_base_url: str = "https://watch.appfollow.io"
+    appfollow_workspace: str = ""  # set via ADINTEL_APPFOLLOW_WORKSPACE= in .env
+    appfollow_group_config_file: Path = ROOT_DIR / "config" / "appfollow_groups.yaml"
 
     # Alerting
     alert_webhook_url: str | None = None

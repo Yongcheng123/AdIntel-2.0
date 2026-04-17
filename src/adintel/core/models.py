@@ -8,6 +8,9 @@ from pydantic import BaseModel, Field, field_validator
 
 class PlatformName(StrEnum):
     SENSORTOWER = "sensortower"
+    OTTERLY = "otterly"
+    SOCIALPETA = "socialpeta"
+    APPFOLLOW = "appfollow"
 
 
 class PlatformIdentifiers(BaseModel):
@@ -72,6 +75,17 @@ class AdvertiserCatalog(BaseModel):
     advertisers: list[AdvertiserProfile] = Field(default_factory=list)
 
 
+class CompetitorGroup(BaseModel):
+    advertiser: str
+    competitors: list[str] = Field(default_factory=list)
+    country: str | None = None
+    notes: str | None = None
+
+
+class CompetitorGroupCatalog(BaseModel):
+    groups: list[CompetitorGroup] = Field(default_factory=list)
+
+
 class CollectorRunRequest(BaseModel):
     advertiser: AdvertiserProfile
     platform: PlatformName
@@ -80,6 +94,7 @@ class CollectorRunRequest(BaseModel):
     headless: bool = False
     debug: bool = False
     started_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    extra: dict = Field(default_factory=dict)  # platform-specific data (e.g. appfollow_item_id)
 
 
 class CollectorRunResult(BaseModel):

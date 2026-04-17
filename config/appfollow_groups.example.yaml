@@ -1,0 +1,40 @@
+# AppFollow review tracking groups.
+#
+# workspace: your AppFollow workspace slug.
+#   Find it in the URL: watch.appfollow.io/apps/{workspace}/...
+#   Copy the slug between /apps/ and the next slash.
+#
+# How to find appfollow_item_id:
+#   1. Go to watch.appfollow.io and open an app from your workspace.
+#   2. Look at the browser URL bar — find the value after ?itemId=
+#      Example: ...?itemId=634040  →  appfollow_item_id: "634040"
+#   3. Repeat for each competitor app you want to track.
+#
+# advertiser names must exactly match the names in config/advertisers.yaml.
+# Competitor names can be new names (they don't need to be in advertisers.yaml),
+# but data will be stored under those names in the DB and queryable via MCP tools.
+
+workspace: "your-workspace-slug"
+
+groups:
+  - advertiser: Chime
+    appfollow_item_id: "XXXXX"
+    countries:
+      - US
+    competitors:
+      - name: Current
+        appfollow_item_id: "YYYYY"
+      - name: Dave
+        appfollow_item_id: "ZZZZZ"
+    notes: Finance neobank review benchmark
+
+  - advertiser: Coinbase
+    appfollow_item_id: "AAAAA"
+    countries:
+      - US
+    competitors:
+      - name: Binance
+        appfollow_item_id: "BBBBB"
+      - name: Kraken
+        appfollow_item_id: "CCCCC"
+    notes: Crypto exchange review benchmark

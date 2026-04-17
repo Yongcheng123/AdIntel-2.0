@@ -1,0 +1,192 @@
+groups:
+  - advertiser: Chime
+    country: US
+    competitors:
+      - Current
+      - Dave
+      - MoneyLion
+    notes: Finance neobank benchmark set
+
+  - advertiser: Binance
+    country: US
+    competitors:
+      - Coinbase
+      - Kraken
+      - eToro
+    notes: Crypto app benchmark set
+
+  - advertiser: Albert
+    country: US
+    competitors:
+      - Cleo
+      - MoneyLion
+      - Dave
+    notes: Finance neobank benchmark set
+
+  - advertiser: Coinbase
+    country: US
+    competitors:
+      - Binance
+      - Kraken
+      - eToro
+    notes: Crypto app benchmark set
+
+  - advertiser: eToro
+    country: US
+    competitors:
+      - NAGA
+      - Public
+      - ZuluTrade
+    notes: Stock trading app benchmark set
+
+  - advertiser: Travel Town
+    country: US
+    competitors:
+      - Gossip Harbor
+      - Seaside Escape
+      - Merge Mansion
+    notes: Mobile game creative benchmark set
+
+  - advertiser: Pokemon GO
+    country: US
+    competitors:
+      - Monster Hunter Now
+      - Jurassic World Alive
+      - Pikmin Bloom
+    notes: Mobile game creative benchmark set
+
+  - advertiser: Royal Match
+    country: US
+    competitors:
+      - Travel Town
+      - MonopolyGo
+      - Mistplay
+    notes: Mobile game creative benchmark set
+
+  - advertiser: MoneyLion
+    country: US
+    competitors:
+      - Chime
+      - Dave
+      - Albert
+    notes: Finance neobank benchmark set
+
+  - advertiser: Kraken
+    country: US
+    competitors:
+      - Coinbase
+      - Binance
+      - Gemini
+    notes: Crypto app benchmark set
+
+  - advertiser: Current
+    country: US
+    competitors:
+      - Chime
+      - Varo
+      - Step
+    notes: Neobank and modern banking creative benchmark set
+
+  - advertiser: Dave
+    country: US
+    competitors:
+      - EarnIn
+      - Brigit
+      - Tilt
+    notes: Cash advance and overdraft app creative benchmark set
+
+  - advertiser: Koho
+    country: CA
+    competitors:
+      - Wealthsimple
+      - Neo Financial
+      - PC Financial
+    notes: Canadian neobank and credit builder creative benchmark set
+
+  - advertiser: Mistplay
+    country: US
+    competitors: 
+      - JustPlay
+      - Rewarded Play
+      - Swagbucks
+    notes: Play-to-earn and rewarded gaming creative benchmark set
+
+  - advertiser: MonopolyGo
+    country: US
+    competitors: 
+      - Coin Master
+      - Board Kings
+      - Dice Dreams
+    notes: Casual board game creative benchmark set
+
+  - advertiser: Possible Finance
+    country: US
+    competitors:
+      - EarnIn
+      - Brigit
+      - OppLoans
+    notes: Short-term lending and credit building creative benchmark set
+
+  - advertiser: Realtor
+    country: US
+    competitors:
+      - Zillow
+      - Redfin
+      - Trulia
+    notes: Real estate and property listing creative benchmark set
+
+  - advertiser: ScrabbleGo
+    country: US
+    competitors:
+      - Words With Friends 2
+      - Wordscapes
+      - Wordle
+    notes: Casual word game creative benchmark set
+
+  - advertiser: Shopback
+    country: US
+    competitors: 
+      - Rakuten
+      - Honey
+      - Ibotta
+    notes: Cashback and shopping rewards creative benchmark set
+
+  - advertiser: Stash
+    country: US
+    competitors:
+      - Acorns
+      - Robinhood
+      - Webull
+    notes: Micro-investing and retail trading creative benchmark set
+
+  - advertiser: Tilt
+    country: US
+    competitors:
+      - EarnIn
+      - Cleo
+      - Dave
+    notes: Cash advance and budgeting app creative benchmark set
+
+  - advertiser: Upside
+    country: US
+    competitors:
+      - GasBuddy
+      - Checkout 51
+      - Ibotta
+    notes: Gas and cashback rewards creative benchmark set
+
+  - advertiser: swagbucks
+    country: US
+    competitors:
+      - InboxDollars
+      - MyPoints
+      - Freecash
+    notes: Survey and online rewards creative benchmark set
+
+  - advertiser: testerup
+    country: US
+    competitors:
+      - Mistplay
+      - Freecash
+      - Swagbucks
+    notes: App testing and rewarded gaming creative benchmark set

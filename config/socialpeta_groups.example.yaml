@@ -1,0 +1,24 @@
+groups:
+  - advertiser: Chime
+    country: US
+    competitors:
+      - Current
+      - Dave
+      - MoneyLion
+    notes: Finance neobank benchmark set
+
+  - advertiser: Coinbase
+    country: US
+    competitors:
+      - Binance
+      - Kraken
+      - eToro
+    notes: Crypto app benchmark set
+
+  - advertiser: Royal Match
+    country: US
+    competitors:
+      - Travel Town
+      - MonopolyGo
+      - Mistplay
+    notes: Mobile game creative benchmark set

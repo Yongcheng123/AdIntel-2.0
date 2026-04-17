@@ -285,6 +285,81 @@ class SensorTowerMarketTopAppRecord(Base):
     scraped_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
 
 
+class SocialPetaCreativeRecord(Base):
+    __tablename__ = "socialpeta_creatives"
+    __table_args__ = (
+        UniqueConstraint("advertiser_name", "country", "creative_id", name="uq_socialpeta_creatives"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    advertiser_name: Mapped[str] = mapped_column(String(255), index=True)
+    country: Mapped[str] = mapped_column(String(8), default="US")
+    creative_id: Mapped[str] = mapped_column(String(255))
+    target_query: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    advertiser_identifier: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    page_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    creative_title: Mapped[str | None] = mapped_column(Text, nullable=True)
+    body: Mapped[str | None] = mapped_column(Text, nullable=True)
+    message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    call_to_action: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    creative_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    ads_type: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    primary_channel: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    landing_page_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    preview_image_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    resource_urls: Mapped[list[dict] | None] = mapped_column(JSON, nullable=True)
+    first_seen: Mapped[date | None] = mapped_column(Date, nullable=True)
+    last_seen: Mapped[date | None] = mapped_column(Date, nullable=True)
+    active_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    impression: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    popularity: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    creative_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at_platform: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    has_page_id: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    has_store_url: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    is_page_analysis: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    raw_payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    scraped_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
+
+
+class SocialPetaCreativeChannelRecord(Base):
+    __tablename__ = "socialpeta_creative_channels"
+    __table_args__ = (
+        UniqueConstraint(
+            "advertiser_name", "country", "creative_id", "channel", name="uq_socialpeta_creative_channels"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    advertiser_name: Mapped[str] = mapped_column(String(255), index=True)
+    country: Mapped[str] = mapped_column(String(8), default="US")
+    creative_id: Mapped[str] = mapped_column(String(255))
+    channel: Mapped[str] = mapped_column(String(64))
+    first_seen: Mapped[date | None] = mapped_column(Date, nullable=True)
+    last_seen: Mapped[date | None] = mapped_column(Date, nullable=True)
+    active_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    scraped_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
+
+
+class SocialPetaCreativeTagRecord(Base):
+    __tablename__ = "socialpeta_creative_tags"
+    __table_args__ = (
+        UniqueConstraint(
+            "advertiser_name", "country", "creative_id", "tag_category", "tag_value",
+            name="uq_socialpeta_creative_tags",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    advertiser_name: Mapped[str] = mapped_column(String(255), index=True)
+    country: Mapped[str] = mapped_column(String(8), default="US")
+    creative_id: Mapped[str] = mapped_column(String(255))
+    tag_category: Mapped[str] = mapped_column(String(64), default="creative_type")
+    tag_value: Mapped[str] = mapped_column(String(128))
+    scraped_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
+
+
 class OtterlyPromptRecord(Base):
     __tablename__ = "otterlyai_prompts"
     __table_args__ = (
@@ -339,4 +414,28 @@ class OtterlyCitationRecord(Base):
     brand_mentioned: Mapped[bool] = mapped_column(Boolean, default=False)
     domain_category: Mapped[str | None] = mapped_column(String(128), nullable=True)
     competitors: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    scraped_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
+
+
+class AppFollowReviewRecord(Base):
+    __tablename__ = "appfollow_reviews"
+    __table_args__ = (
+        UniqueConstraint("advertiser_name", "review_id", name="uq_appfollow_reviews"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    advertiser_name: Mapped[str] = mapped_column(String(255), index=True)
+    review_id: Mapped[str] = mapped_column(String(255))
+    review_date: Mapped[date] = mapped_column(Date)
+    country: Mapped[str] = mapped_column(String(8), default="US")
+    star_rating: Mapped[float | None] = mapped_column(Numeric(3, 1), nullable=True)
+    username: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    title: Mapped[str | None] = mapped_column(Text, nullable=True)
+    body: Mapped[str | None] = mapped_column(Text, nullable=True)
+    sentiment: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    sentiment_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    tags: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    app_version: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    os: Mapped[str] = mapped_column(String(16), default="ios")
+    appfollow_item_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     scraped_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))

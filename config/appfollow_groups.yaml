@@ -1,0 +1,169 @@
+workspace: my-first-workspace
+groups:
+- advertiser: Chime
+  ios_app_id: '836215269'
+  android_package: com.onedebit.chime
+  appfollow_ios_item_id: '639888'
+  appfollow_android_item_id: '639889'
+  countries:
+  - US
+- advertiser: Binance
+  ios_app_id: '1436799971'
+  android_package: com.binance.dev
+  appfollow_ios_item_id: null
+  appfollow_android_item_id: null
+  countries:
+  - US
+- advertiser: Albert
+  ios_app_id: '412786607'
+  appfollow_ios_item_id: '639892'
+  appfollow_android_item_id: null
+  countries:
+  - US
+- advertiser: Coinbase
+  ios_app_id: '886427730'
+  android_package: com.coinbase.android
+  appfollow_ios_item_id: null
+  appfollow_android_item_id: null
+  countries:
+  - US
+- advertiser: eToro
+  ios_app_id: '674984916'
+  android_package: com.etoro.openbook
+  appfollow_ios_item_id: '639812'
+  appfollow_android_item_id: null
+  countries:
+  - US
+- advertiser: Travel Town
+  ios_app_id: '1521236603'
+  android_package: io.randomco.travel
+  appfollow_ios_item_id: '639894'
+  appfollow_android_item_id: '639895'
+  countries:
+  - US
+- advertiser: Pokemon GO
+  ios_app_id: '1094591345'
+  android_package: com.nianticlabs.pokemongo
+  appfollow_ios_item_id: '639896'
+  appfollow_android_item_id: '639897'
+  countries:
+  - US
+- advertiser: Royal Match
+  ios_app_id: '1482155847'
+  android_package: com.dreamgames.royalmatch
+  appfollow_ios_item_id: null
+  appfollow_android_item_id: '639898'
+  countries:
+  - US
+- advertiser: MoneyLion
+  ios_app_id: '1064677082'
+  android_package: com.moneylion
+  appfollow_ios_item_id: '639899'
+  appfollow_android_item_id: '639900'
+  countries:
+  - US
+- advertiser: Kraken
+  ios_app_id: '1481947260'
+  android_package: com.kraken.invest.app
+  appfollow_ios_item_id: null
+  appfollow_android_item_id: null
+  countries:
+  - US
+- advertiser: Current
+  ios_app_id: '1077366211'
+  android_package: com.current.app
+  appfollow_ios_item_id: '639909'
+  appfollow_android_item_id: '639910'
+  countries:
+  - US
+- advertiser: Dave
+  ios_app_id: '1193801909'
+  android_package: com.dave
+  appfollow_ios_item_id: '639901'
+  appfollow_android_item_id: '639902'
+  countries:
+  - US
+- advertiser: Koho
+  ios_app_id: '1091010942'
+  android_package: ca.koho
+  appfollow_ios_item_id: null
+  appfollow_android_item_id: '639911'
+  countries:
+  - CA
+- advertiser: Mistplay
+  ios_app_id: '6739352969'
+  android_package: com.mistplay.mistplay
+  appfollow_ios_item_id: null
+  appfollow_android_item_id: '639903'
+  countries:
+  - US
+- advertiser: MonopolyGo
+  ios_app_id: '1621328561'
+  android_package: com.scopely.monopolygo
+  appfollow_ios_item_id: null
+  appfollow_android_item_id: '639912'
+  countries:
+  - US
+- advertiser: Possible Finance
+  ios_app_id: '1380384597'
+  android_package: com.possible_mobile
+  appfollow_ios_item_id: '639914'
+  appfollow_android_item_id: null
+  countries:
+  - US
+- advertiser: Realtor
+  ios_app_id: '336698281'
+  android_package: com.move.realtor
+  appfollow_ios_item_id: '639904'
+  appfollow_android_item_id: null
+  countries:
+  - US
+- advertiser: ScrabbleGo
+  ios_app_id: '1215933788'
+  android_package: com.pieyel.scrabble
+  appfollow_ios_item_id: '639922'
+  appfollow_android_item_id: '639923'
+  countries:
+  - US
+- advertiser: Shopback
+  ios_app_id: '1086505626'
+  android_package: com.shopback.app
+  appfollow_ios_item_id: null
+  appfollow_android_item_id: '639905'
+  countries:
+  - US
+- advertiser: Stash
+  ios_app_id: '1017148055'
+  android_package: com.stash.stashinvest
+  appfollow_ios_item_id: '639916'
+  appfollow_android_item_id: '639917'
+  countries:
+  - US
+- advertiser: Tilt
+  ios_app_id: '1136397354'
+  android_package: finance.empower
+  appfollow_ios_item_id: '639924'
+  appfollow_android_item_id: '639925'
+  countries:
+  - US
+- advertiser: Upside
+  ios_app_id: '1099997174'
+  android_package: com.upside.consumer.android
+  appfollow_ios_item_id: '639906'
+  appfollow_android_item_id: null
+  countries:
+  - US
+- advertiser: Swagbucks
+  ios_app_id: '640439547'
+  android_package: com.prodege.swagbucksmobile
+  appfollow_ios_item_id: null
+  appfollow_android_item_id: '639919'
+  countries:
+  - US
+- advertiser: Testerup
+  ios_app_id: '1241984225'
+  android_package: de.empfohlen
+  appfollow_ios_item_id: null
+  appfollow_android_item_id: '639907'
+  countries:
+  - US

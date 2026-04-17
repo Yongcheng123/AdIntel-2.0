@@ -4,13 +4,16 @@ import json
 import os
 from datetime import date, datetime
 from decimal import Decimal
+from collections import Counter
 
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 from sqlalchemy import case, desc, func, or_, select
 
+from adintel.core.competitor_groups import build_competitor_run_plan, load_competitor_groups
 from adintel.core.settings import ROOT_DIR, get_settings
 from adintel.db.models import (
+    AppFollowReviewRecord,
     OtterlyCitationRecord,
     OtterlyPromptRecord,
     RequestedAdvertiserRecord,
@@ -26,6 +29,9 @@ from adintel.db.models import (
     SensorTowerReviewTextRecord,
     SensorTowerRetentionRecord,
     SensorTowerUsageRecord,
+    SocialPetaCreativeChannelRecord,
+    SocialPetaCreativeRecord,
+    SocialPetaCreativeTagRecord,
 )
 from adintel.db.repositories import AdvertiserRepository, CollectionHealthRepository, RequestedAdvertiserRepository
 from adintel.db.repositories import ScrapeRunRepository
@@ -134,6 +140,54 @@ def _build_data_availability(session, advertiser_name: str | None = None) -> dic
             ).group_by(OtterlyCitationRecord.target_brand_or_domain_name)
         ).all()
     }
+    socialpeta_freshness = {
+        row.advertiser_name: {
+            "last_scraped": row.last_scraped.isoformat() if row.last_scraped else None,
+            "creative_rows": row.creative_rows,
+        }
+        for row in session.execute(
+            select(
+                SocialPetaCreativeRecord.advertiser_name,
+                func.max(SocialPetaCreativeRecord.scraped_at).label("last_scraped"),
+                func.count().label("creative_rows"),
+            ).group_by(SocialPetaCreativeRecord.advertiser_name)
+        ).all()
+    }
+    socialpeta_channel_counts = {
+        row.advertiser_name: row.channel_rows
+        for row in session.execute(
+            select(
+                SocialPetaCreativeChannelRecord.advertiser_name,
+                func.count().label("channel_rows"),
+            ).group_by(SocialPetaCreativeChannelRecord.advertiser_name)
+        ).all()
+    }
+    socialpeta_tag_counts = {
+        row.advertiser_name: row.tag_rows
+        for row in session.execute(
+            select(
+                SocialPetaCreativeTagRecord.advertiser_name,
+                func.count().label("tag_rows"),
+            ).group_by(SocialPetaCreativeTagRecord.advertiser_name)
+        ).all()
+    }
+    appfollow_freshness = {
+        row.advertiser_name: {
+            "last_scraped": row.last_scraped.isoformat() if row.last_scraped else None,
+            "review_rows": row.review_rows,
+        }
+        for row in session.execute(
+            select(
+                AppFollowReviewRecord.advertiser_name,
+                func.max(AppFollowReviewRecord.scraped_at).label("last_scraped"),
+                func.count().label("review_rows"),
+            ).group_by(AppFollowReviewRecord.advertiser_name)
+        ).all()
+    }
+    socialpeta_freshness_ci = {k.casefold(): v for k, v in socialpeta_freshness.items()}
+    socialpeta_channel_counts_ci = {k.casefold(): v for k, v in socialpeta_channel_counts.items()}
+    socialpeta_tag_counts_ci = {k.casefold(): v for k, v in socialpeta_tag_counts.items()}
+    appfollow_freshness_ci = {k.casefold(): v for k, v in appfollow_freshness.items()}
 
     rows: list[dict] = []
     for advertiser in advertisers:
@@ -142,6 +196,15 @@ def _build_data_availability(session, advertiser_name: str | None = None) -> dic
         st_download_rows = st_download_counts.get(advertiser.name, 0)
         geo_prompt = geo_prompt_stats.get(geo_key, {})
         geo_citation_rows = geo_citation_counts.get(geo_key, 0)
+        name_ci = advertiser.name.casefold()
+        socialpeta_run = socialpeta_freshness.get(advertiser.name) or socialpeta_freshness_ci.get(name_ci, {})
+        socialpeta_creative_rows = socialpeta_run.get("creative_rows", 0)
+        socialpeta_channel_rows = socialpeta_channel_counts.get(advertiser.name) or socialpeta_channel_counts_ci.get(
+            name_ci, 0
+        )
+        socialpeta_tag_rows = socialpeta_tag_counts.get(advertiser.name) or socialpeta_tag_counts_ci.get(name_ci, 0)
+        af_run = appfollow_freshness.get(advertiser.name) or appfollow_freshness_ci.get(name_ci, {})
+        af_review_rows = af_run.get("review_rows", 0)
 
         rows.append({
             "advertiser_name": advertiser.name,
@@ -158,6 +221,18 @@ def _build_data_availability(session, advertiser_name: str | None = None) -> dic
                 "prompt_rows": geo_prompt.get("prompt_rows", 0),
                 "citation_rows": geo_citation_rows,
             },
+            "socialpeta": {
+                "has_data": bool(socialpeta_creative_rows or socialpeta_channel_rows or socialpeta_tag_rows),
+                "last_scraped": socialpeta_run.get("last_scraped"),
+                "creative_rows": socialpeta_creative_rows,
+                "channel_rows": socialpeta_channel_rows,
+                "tag_rows": socialpeta_tag_rows,
+            },
+            "appfollow": {
+                "has_data": bool(af_review_rows),
+                "last_scraped": af_run.get("last_scraped"),
+                "review_rows": af_review_rows,
+            },
         })
 
     return {
@@ -165,8 +240,12 @@ def _build_data_availability(session, advertiser_name: str | None = None) -> dic
             "tracked_advertisers": len(rows),
             "sensortower_available": sum(1 for row in rows if row["sensortower"]["has_data"]),
             "geo_otterly_available": sum(1 for row in rows if row["geo_otterly"]["has_data"]),
+            "socialpeta_available": sum(1 for row in rows if row["socialpeta"]["has_data"]),
+            "appfollow_available": sum(1 for row in rows if row["appfollow"]["has_data"]),
             "missing_sensortower": [row["advertiser_name"] for row in rows if not row["sensortower"]["has_data"]],
             "missing_geo_otterly": [row["advertiser_name"] for row in rows if not row["geo_otterly"]["has_data"]],
+            "missing_socialpeta": [row["advertiser_name"] for row in rows if not row["socialpeta"]["has_data"]],
+            "missing_appfollow": [row["advertiser_name"] for row in rows if not row["appfollow"]["has_data"]],
         },
         "advertisers": rows,
     }
@@ -516,6 +595,170 @@ def _compute_geo_snapshot(
         "top_blind_spots": blind_spots,
         "signals": signals,
     }
+
+
+def _socialpeta_resolve_target(session, advertiser_name: str) -> str | None:
+    advertiser_repo = AdvertiserRepository(session)
+    resolved = advertiser_repo.resolve(advertiser_name)
+    if resolved is not None:
+        return resolved.name
+
+    exact = session.scalar(
+        select(SocialPetaCreativeRecord.advertiser_name)
+        .where(func.lower(SocialPetaCreativeRecord.advertiser_name) == advertiser_name.lower())
+        .limit(1)
+    )
+    if exact:
+        return exact
+
+    fuzzy = session.scalar(
+        select(SocialPetaCreativeRecord.advertiser_name)
+        .where(SocialPetaCreativeRecord.advertiser_name.ilike(f"%{advertiser_name}%"))
+        .limit(1)
+    )
+    return fuzzy
+
+
+def _socialpeta_snapshot(session, advertiser_name: str, country: str | None = None) -> dict | None:
+    rows_q = select(SocialPetaCreativeRecord).where(SocialPetaCreativeRecord.advertiser_name == advertiser_name)
+    if country:
+        rows_q = rows_q.where(SocialPetaCreativeRecord.country == country)
+    rows = session.scalars(rows_q).all()
+    if not rows:
+        return None
+
+    channel_q = select(SocialPetaCreativeChannelRecord).where(
+        SocialPetaCreativeChannelRecord.advertiser_name == advertiser_name
+    )
+    tag_q = select(SocialPetaCreativeTagRecord).where(SocialPetaCreativeTagRecord.advertiser_name == advertiser_name)
+    if country:
+        channel_q = channel_q.where(SocialPetaCreativeChannelRecord.country == country)
+        tag_q = tag_q.where(SocialPetaCreativeTagRecord.country == country)
+    channels = session.scalars(channel_q).all()
+    tags = session.scalars(tag_q).all()
+
+    type_counts = Counter((row.creative_type or "unknown") for row in rows)
+    primary_channel_counts = Counter((row.primary_channel or "unknown") for row in rows)
+    channel_counts = Counter(row.channel for row in channels if row.channel)
+    tag_counts = Counter(f"{row.tag_category}:{row.tag_value}" for row in tags if row.tag_value)
+    video_count = sum(1 for row in rows if (row.creative_type or "").casefold() == "video")
+    image_count = sum(1 for row in rows if (row.creative_type or "").casefold() == "image")
+    long_running_count = sum(1 for row in rows if (row.active_days or 0) >= 30)
+    active_days = [row.active_days for row in rows if row.active_days is not None]
+    impressions = [row.impression for row in rows if row.impression is not None]
+    scores = [row.creative_score for row in rows if row.creative_score is not None]
+    first_seen = min((row.first_seen for row in rows if row.first_seen is not None), default=None)
+    last_seen = max((row.last_seen for row in rows if row.last_seen is not None), default=None)
+
+    return {
+        "advertiser_name": advertiser_name,
+        "country": country,
+        "creatives": len(rows),
+        "creative_type_distribution": dict(type_counts),
+        "video_share": round(video_count / len(rows), 4) if rows else None,
+        "image_share": round(image_count / len(rows), 4) if rows else None,
+        "avg_active_days": round(sum(active_days) / len(active_days), 1) if active_days else None,
+        "long_running_share": round(long_running_count / len(rows), 4) if rows else None,
+        "avg_impression": round(sum(impressions) / len(impressions), 1) if impressions else None,
+        "avg_creative_score": round(sum(scores) / len(scores), 1) if scores else None,
+        "first_seen": first_seen.isoformat() if first_seen else None,
+        "last_seen": last_seen.isoformat() if last_seen else None,
+        "primary_channel_distribution": dict(primary_channel_counts),
+        "channel_distribution": dict(channel_counts),
+        "tag_distribution": dict(tag_counts),
+        "top_primary_channel": primary_channel_counts.most_common(1)[0][0] if primary_channel_counts else None,
+        "top_channel": channel_counts.most_common(1)[0][0] if channel_counts else None,
+        "top_tag": tag_counts.most_common(1)[0][0] if tag_counts else None,
+        "top_pages": [
+            {"page_name": name, "count": count}
+            for name, count in Counter((row.page_name or "unknown") for row in rows).most_common(5)
+        ],
+        "sample_creatives": [
+            {
+                "creative_id": row.creative_id,
+                "title": row.creative_title,
+                "creative_type": row.creative_type,
+                "primary_channel": row.primary_channel,
+                "first_seen": row.first_seen.isoformat() if row.first_seen else None,
+                "last_seen": row.last_seen.isoformat() if row.last_seen else None,
+                "active_days": row.active_days,
+                "impression": row.impression,
+                "preview_image_url": row.preview_image_url,
+            }
+            for row in sorted(
+                rows,
+                key=lambda r: (
+                    r.active_days if r.active_days is not None else -1,
+                    r.impression if r.impression is not None else -1,
+                ),
+                reverse=True,
+            )[:5]
+        ],
+    }
+
+
+def _socialpeta_comparison_snapshot(
+    session,
+    advertiser_names: list[str],
+    country: str | None = None,
+) -> dict:
+    snapshots: dict[str, dict] = {}
+    for name in advertiser_names:
+        snap = _socialpeta_snapshot(session, name, country=country)
+        if snap is not None:
+            snapshots[name] = snap
+
+    if not snapshots:
+        return {
+            "found": False,
+            "advertiser_names": advertiser_names,
+            "message": "No SocialPeta creative data found for the requested advertisers.",
+        }
+
+    found_names = list(snapshots.keys())
+    comparison: dict[str, object] = {
+        "found": True,
+        "country": country,
+        "advertiser_names": found_names,
+        "brands": snapshots,
+    }
+
+    if len(found_names) >= 2:
+        root = found_names[0]
+        competitors = found_names[1:]
+        competitor_rows = [snapshots[name] for name in competitors]
+        competitor_totals = [snap["creatives"] for snap in competitor_rows]
+        competitor_video_shares = [snap["video_share"] for snap in competitor_rows if snap["video_share"] is not None]
+        competitor_long_running = [snap["long_running_share"] for snap in competitor_rows if snap["long_running_share"] is not None]
+        competitor_channels = set()
+        competitor_tags = set()
+        for snap in competitor_rows:
+            competitor_channels.update(snap["channel_distribution"].keys())
+            competitor_tags.update(snap["tag_distribution"].keys())
+
+        root_snap = snapshots[root]
+        comparison["gap_analysis"] = {
+            "root": root,
+            "competitors": competitors,
+            "creative_volume_gap": {
+                "root": root_snap["creatives"],
+                "competitor_average": round(sum(competitor_totals) / len(competitor_totals), 1) if competitor_totals else None,
+            },
+            "video_share_gap": {
+                "root": root_snap["video_share"],
+                "competitor_average": round(sum(competitor_video_shares) / len(competitor_video_shares), 4)
+                if competitor_video_shares else None,
+            },
+            "long_running_share_gap": {
+                "root": root_snap["long_running_share"],
+                "competitor_average": round(sum(competitor_long_running) / len(competitor_long_running), 4)
+                if competitor_long_running else None,
+            },
+            "channel_blind_spots": sorted(competitor_channels - set(root_snap["channel_distribution"].keys())),
+            "tag_blind_spots": sorted(competitor_tags - set(root_snap["tag_distribution"].keys())),
+        }
+
+    return comparison
 
 
 def _build_summary(advertiser_name: str, country: str | None = None) -> dict:
@@ -1053,7 +1296,22 @@ def create_mcp_server() -> FastMCP:
             "2. Engine-by-engine breakdown with sentiment and rank\n"
             "3. Blind spots: engines/prompts where competitors appear but brand doesn't\n"
             "4. Citation landscape: top domains, brand-owned vs third-party\n"
-            "5. Opportunities: uncovered engines, high-volume uncited prompts, negative sentiment areas"
+            "5. Opportunities: uncovered engines, high-volume uncited prompts, negative sentiment areas\n\n"
+            "DATA COLLECTED FROM APPFOLLOW (per tracked app):\n"
+            "- Individual reviews: text body, star rating, username, title, country, OS (iOS/Android).\n"
+            "- Sentiment: positive/negative/neutral label per review, optional numeric score.\n"
+            "- Keyword tags: topic/keyword tags attached to each review by AppFollow.\n"
+            "- Collection: requires config/appfollow_groups.yaml with workspace slug and app item IDs.\n"
+            "  Run: bash scripts/run_appfollow_to_server.sh\n\n"
+            "APPFOLLOW WORKFLOW:\n"
+            "- Single advertiser review analysis → get_appfollow_reviews (filterable list) or\n"
+            "  get_appfollow_sentiment_trend (daily positive/negative/neutral breakdown).\n"
+            "- Find root causes → get_appfollow_keyword_analysis (top keyword/topic counts).\n"
+            "  Filter by sentiment='negative' to see what users complain about.\n"
+            "  Filter by sentiment='positive' to see what competitors are praised for.\n"
+            "- Competitor comparison → compare_appfollow_reviews (comma-separated names).\n"
+            "  Returns rating gap, sentiment leader, top keywords per brand.\n"
+            "  Example: 'Chime, Current, Dave' reveals which neobank has the best user sentiment."
         ),
         streamable_http_path="/",
         host="0.0.0.0",
@@ -1164,6 +1422,76 @@ def create_mcp_server() -> FastMCP:
     )
     def get_advertiser_summary(advertiser_name: str, country: str | None = None) -> str:
         return json.dumps(_build_summary(advertiser_name, country=country), indent=2)
+
+    @server.tool(
+        name="get_socialpeta_summary",
+        description=(
+            "Get a comprehensive SocialPeta summary for a specific advertiser from collected display-ad data. "
+            "Returns creative mix, active duration, channel distribution, tags, and a comparison against the "
+            "advertiser's configured competitor group when available."
+        ),
+    )
+    def get_socialpeta_summary(advertiser_name: str, country: str | None = None) -> str:
+        with _session_factory()() as session:
+            canonical_name = _socialpeta_resolve_target(session, advertiser_name)
+            if canonical_name is None:
+                return json.dumps({
+                    "found": False,
+                    "advertiser_name": advertiser_name,
+                    "message": "No SocialPeta creative data found for this advertiser.",
+                })
+
+            snapshot = _socialpeta_snapshot(session, canonical_name, country=country)
+            if snapshot is None:
+                return json.dumps({
+                    "found": False,
+                    "advertiser_name": canonical_name,
+                    "country": country,
+                    "message": "No SocialPeta creative data found for this advertiser.",
+                })
+
+            groups = load_competitor_groups(get_settings().socialpeta_group_config_file)
+            plan = build_competitor_run_plan(groups, canonical_name)
+            comparison = _socialpeta_comparison_snapshot(
+                session,
+                [canonical_name, *plan.competitors],
+                country=country,
+            )
+
+        return json.dumps(
+            {
+                "found": True,
+                "advertiser_name": canonical_name,
+                "country": country,
+                "configured_competitors": plan.competitors,
+                "summary": snapshot,
+                "comparison": comparison,
+            },
+            indent=2,
+        )
+
+    @server.tool(
+        name="get_socialpeta_comparison",
+        description=(
+            "Compare multiple advertisers using SocialPeta display-ad creative data. "
+            "The comparison includes creative volume, video/image mix, average active duration, "
+            "channel blind spots, and tag blind spots. "
+            "Pass advertiser_names as a comma-separated list."
+        ),
+    )
+    def get_socialpeta_comparison(advertiser_names: str, country: str | None = None) -> str:
+        names = [name.strip() for name in advertiser_names.split(",") if name.strip()]
+        if not names:
+            return json.dumps({"found": False, "message": "No advertiser names were provided."})
+
+        with _session_factory()() as session:
+            if len(names) == 1:
+                groups = load_competitor_groups(get_settings().socialpeta_group_config_file)
+                plan = build_competitor_run_plan(groups, names[0])
+                names = [names[0], *plan.competitors]
+            comparison = _socialpeta_comparison_snapshot(session, names, country=country)
+
+        return json.dumps(comparison, indent=2)
 
     @server.tool(
         name="request_advertiser",
@@ -2532,6 +2860,375 @@ def create_mcp_server() -> FastMCP:
             },
             "field_gaps": field_gaps,
             "ready_for_analysis": len(field_gaps) == 0,
+        }, indent=2)
+
+    # ------------------------------------------------------------------
+    # AppFollow tools
+    # ------------------------------------------------------------------
+
+    @server.tool(
+        name="get_appfollow_reviews",
+        description=(
+            "List individual AppFollow reviews for an advertiser with optional filters. "
+            "Filters: country (ISO-2), os ('ios'/'android'), sentiment ('positive'/'negative'/'neutral'), "
+            "min_rating (1-5), days lookback (default 90). "
+            "Returns up to limit reviews (default 50, max 200) ordered by review_date desc. "
+            "Useful for reading actual user complaints and praise verbatim."
+        ),
+    )
+    def get_appfollow_reviews(
+        advertiser_name: str,
+        country: str | None = None,
+        os: str | None = None,
+        sentiment: str | None = None,
+        min_rating: float | None = None,
+        days: int = 90,
+        limit: int = 50,
+    ) -> str:
+        from datetime import timedelta
+        limit = max(1, min(limit, 200))
+        cutoff = date.today() - timedelta(days=days)
+
+        with _session_factory()() as session:
+            repo = AdvertiserRepository(session)
+            advertiser = repo.resolve(advertiser_name)
+            resolved_name = advertiser.name if advertiser else advertiser_name
+
+            q = (
+                select(AppFollowReviewRecord)
+                .where(AppFollowReviewRecord.advertiser_name == resolved_name)
+                .where(AppFollowReviewRecord.review_date >= cutoff)
+            )
+            if country:
+                q = q.where(AppFollowReviewRecord.country == country.upper())
+            if os:
+                q = q.where(AppFollowReviewRecord.os == os.lower())
+            if sentiment:
+                q = q.where(AppFollowReviewRecord.sentiment == sentiment.lower())
+            if min_rating is not None:
+                q = q.where(AppFollowReviewRecord.star_rating >= min_rating)
+
+            rows = session.scalars(
+                q.order_by(desc(AppFollowReviewRecord.review_date)).limit(limit)
+            ).all()
+
+        return json.dumps({
+            "found": bool(rows),
+            "resolved_name": resolved_name,
+            "filters": {
+                "country": country,
+                "os": os,
+                "sentiment": sentiment,
+                "min_rating": min_rating,
+                "days": days,
+            },
+            "count": len(rows),
+            "reviews": [
+                {
+                    "review_id":       row.review_id,
+                    "review_date":     row.review_date.isoformat(),
+                    "country":         row.country,
+                    "os":              row.os,
+                    "star_rating":     _to_float(row.star_rating),
+                    "username":        row.username,
+                    "title":           row.title,
+                    "body":            row.body,
+                    "sentiment":       row.sentiment,
+                    "sentiment_score": _to_float(row.sentiment_score),
+                    "tags":            row.tags,
+                    "app_version":     row.app_version,
+                }
+                for row in rows
+            ],
+        }, indent=2)
+
+    @server.tool(
+        name="get_appfollow_sentiment_trend",
+        description=(
+            "Return daily sentiment breakdown (positive/negative/neutral counts and avg rating) "
+            "for an advertiser's AppFollow reviews. "
+            "Useful for tracking when sentiment improved or degraded — e.g. after a product launch or competitor move. "
+            "Filter by country or os. days default: 90."
+        ),
+    )
+    def get_appfollow_sentiment_trend(
+        advertiser_name: str,
+        country: str | None = None,
+        os: str | None = None,
+        days: int = 90,
+    ) -> str:
+        from datetime import timedelta
+        cutoff = date.today() - timedelta(days=days)
+
+        with _session_factory()() as session:
+            repo = AdvertiserRepository(session)
+            advertiser = repo.resolve(advertiser_name)
+            resolved_name = advertiser.name if advertiser else advertiser_name
+
+            q = (
+                select(
+                    AppFollowReviewRecord.review_date,
+                    AppFollowReviewRecord.sentiment,
+                    func.count().label("count"),
+                    func.avg(AppFollowReviewRecord.star_rating).label("avg_rating"),
+                )
+                .where(AppFollowReviewRecord.advertiser_name == resolved_name)
+                .where(AppFollowReviewRecord.review_date >= cutoff)
+            )
+            if country:
+                q = q.where(AppFollowReviewRecord.country == country.upper())
+            if os:
+                q = q.where(AppFollowReviewRecord.os == os.lower())
+
+            q = q.group_by(
+                AppFollowReviewRecord.review_date,
+                AppFollowReviewRecord.sentiment,
+            ).order_by(AppFollowReviewRecord.review_date)
+
+            result_rows = session.execute(q).all()
+
+        # Pivot: date → {positive: N, negative: N, neutral: N, total: N, avg_rating: F}
+        by_date: dict[str, dict] = {}
+        for row in result_rows:
+            d = row.review_date.isoformat()
+            entry = by_date.setdefault(d, {
+                "date": d, "positive": 0, "negative": 0, "neutral": 0,
+                "unknown": 0, "avg_rating": None, "total": 0,
+            })
+            label = (row.sentiment or "unknown").lower()
+            entry[label] = entry.get(label, 0) + int(row.count)
+            entry["total"] += int(row.count)
+            if row.avg_rating is not None:
+                entry["avg_rating"] = round(float(row.avg_rating), 2)
+
+        trend = sorted(by_date.values(), key=lambda x: x["date"])
+        return json.dumps({
+            "found": bool(trend),
+            "resolved_name": resolved_name,
+            "filters": {"country": country, "os": os, "days": days},
+            "trend": trend,
+        }, indent=2)
+
+    @server.tool(
+        name="get_appfollow_keyword_analysis",
+        description=(
+            "Return top keywords and topics extracted from AppFollow review tags. "
+            "Filter by sentiment='negative' to see what users complain about; "
+            "filter by sentiment='positive' to see what users praise. "
+            "Returns top_n keywords (default 20) each with count, avg_rating, and sentiment_split. "
+            "Example: '35% of negative reviews mention slow registration' — the kind of insight "
+            "that explains why conversion rates are poor."
+        ),
+    )
+    def get_appfollow_keyword_analysis(
+        advertiser_name: str,
+        country: str | None = None,
+        sentiment: str | None = None,
+        days: int = 90,
+        top_n: int = 20,
+    ) -> str:
+        from datetime import timedelta
+        cutoff = date.today() - timedelta(days=days)
+
+        with _session_factory()() as session:
+            repo = AdvertiserRepository(session)
+            advertiser = repo.resolve(advertiser_name)
+            resolved_name = advertiser.name if advertiser else advertiser_name
+
+            q = (
+                select(
+                    AppFollowReviewRecord.tags,
+                    AppFollowReviewRecord.sentiment,
+                    AppFollowReviewRecord.star_rating,
+                )
+                .where(AppFollowReviewRecord.advertiser_name == resolved_name)
+                .where(AppFollowReviewRecord.review_date >= cutoff)
+                .where(AppFollowReviewRecord.tags.isnot(None))
+            )
+            if country:
+                q = q.where(AppFollowReviewRecord.country == country.upper())
+            if sentiment:
+                q = q.where(AppFollowReviewRecord.sentiment == sentiment.lower())
+
+            result_rows = session.execute(q).all()
+
+        tag_counts: dict[str, int] = {}
+        tag_ratings: dict[str, list[float]] = {}
+        tag_sentiments: dict[str, Counter] = {}
+
+        for row in result_rows:
+            for tag in (row.tags or []):
+                if not tag:
+                    continue
+                tag_counts[tag] = tag_counts.get(tag, 0) + 1
+                if row.star_rating is not None:
+                    tag_ratings.setdefault(tag, []).append(float(row.star_rating))
+                s = (row.sentiment or "unknown").lower()
+                tag_sentiments.setdefault(tag, Counter())[s] += 1
+
+        top_keywords = sorted(tag_counts.items(), key=lambda x: x[1], reverse=True)[:top_n]
+        keywords = [
+            {
+                "keyword":         kw,
+                "count":           count,
+                "avg_rating":      (
+                    round(sum(tag_ratings[kw]) / len(tag_ratings[kw]), 2)
+                    if kw in tag_ratings and tag_ratings[kw] else None
+                ),
+                "sentiment_split": dict(tag_sentiments.get(kw, Counter())),
+            }
+            for kw, count in top_keywords
+        ]
+
+        return json.dumps({
+            "found": bool(keywords),
+            "resolved_name": resolved_name,
+            "filters": {"country": country, "sentiment": sentiment, "days": days},
+            "total_reviews_with_tags": len(result_rows),
+            "top_keywords": keywords,
+        }, indent=2)
+
+    @server.tool(
+        name="compare_appfollow_reviews",
+        description=(
+            "Compare AppFollow review sentiment and ratings across multiple advertisers. "
+            "Pass advertiser_names as a comma-separated list (e.g. 'Chime, Current, Dave'). "
+            "Returns per-brand: total reviews, avg rating, sentiment distribution, top keywords. "
+            "gap_analysis identifies which competitor has the highest rating and best sentiment. "
+            "Use this to answer: 'What are competitors praised for that we are criticized for?'"
+        ),
+    )
+    def compare_appfollow_reviews(
+        advertiser_names: str,
+        country: str | None = None,
+        days: int = 90,
+    ) -> str:
+        from datetime import timedelta
+        names = [n.strip() for n in advertiser_names.split(",") if n.strip()]
+        if not names:
+            return json.dumps({"found": False, "message": "No advertiser names provided."})
+
+        cutoff = date.today() - timedelta(days=days)
+        results: dict[str, dict] = {}
+
+        with _session_factory()() as session:
+            repo = AdvertiserRepository(session)
+
+            for raw_name in names:
+                advertiser = repo.resolve(raw_name)
+                resolved = advertiser.name if advertiser else raw_name
+
+                q = (
+                    select(
+                        AppFollowReviewRecord.sentiment,
+                        func.count().label("count"),
+                        func.avg(AppFollowReviewRecord.star_rating).label("avg_rating"),
+                    )
+                    .where(AppFollowReviewRecord.advertiser_name == resolved)
+                    .where(AppFollowReviewRecord.review_date >= cutoff)
+                )
+                if country:
+                    q = q.where(AppFollowReviewRecord.country == country.upper())
+                q = q.group_by(AppFollowReviewRecord.sentiment)
+                sentiment_rows = session.execute(q).all()
+
+                if not sentiment_rows:
+                    results[resolved] = {"found": False, "message": "No AppFollow data collected yet."}
+                    continue
+
+                tag_q = (
+                    select(AppFollowReviewRecord.tags)
+                    .where(AppFollowReviewRecord.advertiser_name == resolved)
+                    .where(AppFollowReviewRecord.review_date >= cutoff)
+                    .where(AppFollowReviewRecord.tags.isnot(None))
+                )
+                if country:
+                    tag_q = tag_q.where(AppFollowReviewRecord.country == country.upper())
+                tag_counts: dict[str, int] = {}
+                for (tags,) in session.execute(tag_q).all():
+                    for t in (tags or []):
+                        if t:
+                            tag_counts[t] = tag_counts.get(t, 0) + 1
+                top_tags = [k for k, _ in sorted(tag_counts.items(), key=lambda x: x[1], reverse=True)[:10]]
+
+                sentiment_dist: dict[str, int] = {}
+                total_reviews = 0
+                avg_ratings: list[float] = []
+                for row in sentiment_rows:
+                    label = (row.sentiment or "unknown").lower()
+                    sentiment_dist[label] = int(row.count)
+                    total_reviews += int(row.count)
+                    if row.avg_rating is not None:
+                        avg_ratings.append(float(row.avg_rating))
+
+                results[resolved] = {
+                    "found":                 True,
+                    "total_reviews":         total_reviews,
+                    "avg_rating":            round(sum(avg_ratings) / len(avg_ratings), 2) if avg_ratings else None,
+                    "sentiment_distribution": sentiment_dist,
+                    "top_keywords":          top_tags,
+                }
+
+        found_names = [n for n, d in results.items() if d.get("found")]
+        gap_analysis = None
+        if len(found_names) >= 2:
+            root = found_names[0]
+            competitors = found_names[1:]
+            root_data = results[root]
+
+            def _positive_rate(d: dict) -> float:
+                total = d.get("total_reviews") or 1
+                return d.get("sentiment_distribution", {}).get("positive", 0) / total
+
+            gap_analysis = {
+                "root":             root,
+                "competitors":      competitors,
+                "rating_gaps": {
+                    comp: {
+                        "root_avg_rating":       root_data.get("avg_rating"),
+                        "competitor_avg_rating": results[comp].get("avg_rating"),
+                        "delta":                 (
+                            round(
+                                (results[comp].get("avg_rating") or 0)
+                                - (root_data.get("avg_rating") or 0),
+                                2,
+                            )
+                            if root_data.get("avg_rating") and results[comp].get("avg_rating")
+                            else None
+                        ),
+                    }
+                    for comp in competitors
+                    if results[comp].get("found")
+                },
+                "positive_rate_gaps": {
+                    comp: {
+                        "root_positive_rate":       round(_positive_rate(root_data), 3),
+                        "competitor_positive_rate": round(_positive_rate(results[comp]), 3),
+                        "delta":                    round(
+                            _positive_rate(results[comp]) - _positive_rate(root_data), 3
+                        ),
+                    }
+                    for comp in competitors
+                    if results[comp].get("found")
+                },
+                "sentiment_leader": max(
+                    found_names,
+                    key=lambda n: _positive_rate(results[n]),
+                    default=None,
+                ),
+                "rating_leader": max(
+                    (n for n in found_names if results[n].get("avg_rating") is not None),
+                    key=lambda n: results[n].get("avg_rating", 0),
+                    default=None,
+                ),
+            }
+
+        return json.dumps({
+            "found":        bool(found_names),
+            "country":      country,
+            "days":         days,
+            "brands":       results,
+            "gap_analysis": gap_analysis,
         }, indent=2)
 
     return server

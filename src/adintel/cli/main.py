@@ -248,6 +248,51 @@ def collect_advertiser(
         typer.echo(f"{result.platform}: {result.status} | {result.message}")
 
 
+@collect_app.command("socialpeta-display-ads")
+def collect_socialpeta_display_ads(
+    query: str = typer.Option(..., help="Keyword or advertiser query to search in SocialPeta."),
+    country: str = typer.Option("US", help="Country code recorded with saved rows."),
+    pages: int = typer.Option(3, min=1, max=20, help="Number of result pages to capture."),
+    headless: bool = typer.Option(False, help="Run browser headlessly."),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable verbose logging (DEBUG level)."),
+) -> None:
+    """Collect SocialPeta display-ad creatives for a specific search query."""
+    from adintel.platforms.socialpeta import SocialPetaCollector
+    from adintel.core.browser import BrowserManager
+
+    _setup_logging(verbose)
+    settings = get_settings()
+    with _session_factory()() as session:
+        collector = SocialPetaCollector(settings=settings, browser=BrowserManager(settings), session=session)
+        async def _run() -> str:
+            from adintel.platforms.socialpeta import close_context, ensure_display_ads_page, ensure_page, launch_context
+
+            playwright, context = await launch_context(headless=headless)
+            try:
+                page = await ensure_page(context)
+                if "socialpeta.com/modules/ecom/creative/display-ads" not in page.url:
+                    await ensure_display_ads_page(page, timeout_ms=60_000)
+                if "login" in page.url or "sign" in page.url:
+                    return "socialpeta: auth_expired | SocialPeta session has expired. Run `adintel login socialpeta`."
+                outcome = await collector.collect_query(
+                    page,
+                    advertiser_name=query,
+                    target_query=query,
+                    country=country.upper(),
+                    pages=pages,
+                )
+                return (
+                    f"socialpeta: {'success' if outcome['records_written'] else 'empty'} | "
+                    f"Collected {outcome['records_written']} SocialPeta creative rows for `{query}`."
+                )
+            finally:
+                await close_context(playwright, context)
+
+        message = asyncio.run(_run())
+
+    typer.echo(message)
+
+
 @collect_app.command("market-top-apps")
 def collect_market_top_apps(
     category: str = typer.Option("6015", help="Category ID (e.g. '6015' for Finance) or name."),

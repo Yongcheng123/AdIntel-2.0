@@ -14,6 +14,9 @@ from adintel.db.models import (
     ScrapeRunRecord,
     SensorTowerDownloadRecord,
     SensorTowerMarketTopAppRecord,
+    SocialPetaCreativeChannelRecord,
+    SocialPetaCreativeRecord,
+    SocialPetaCreativeTagRecord,
 )
 from adintel.mcp.server import create_mcp_server
 
@@ -24,6 +27,8 @@ def test_mcp_server_registers_expected_tools() -> None:
     assert tool_names == [
         "list_advertisers",
         "get_advertiser_summary",
+        "get_socialpeta_summary",
+        "get_socialpeta_comparison",
         "request_advertiser",
         "list_requested_advertisers",
         "read_schema_text",
@@ -35,6 +40,10 @@ def test_mcp_server_registers_expected_tools() -> None:
         "get_geo_summary",
         "compare_geo_visibility",
         "get_geo_data_availability",
+        "get_appfollow_reviews",
+        "get_appfollow_sentiment_trend",
+        "get_appfollow_keyword_analysis",
+        "compare_appfollow_reviews",
     ]
 
 
@@ -165,6 +174,51 @@ def test_get_collection_status_includes_otterly_availability_matrix(monkeypatch)
     assert availability["geo_otterly"]["prompt_rows"] == 1
 
 
+def test_get_collection_status_includes_socialpeta_availability_matrix(monkeypatch) -> None:
+    session_factory = build_sqlite_session_factory()
+    with session_factory() as session:
+        session.add(AdvertiserRecord(name="Chime", countries_csv="US"))
+        session.add(
+            SocialPetaCreativeRecord(
+                advertiser_name="Chime",
+                country="US",
+                creative_id="creative-1",
+                creative_title="Save more today",
+                creative_type="Video",
+                primary_channel="TikTok",
+            )
+        )
+        session.add(
+            SocialPetaCreativeChannelRecord(
+                advertiser_name="Chime",
+                country="US",
+                creative_id="creative-1",
+                channel="TikTok",
+            )
+        )
+        session.add(
+            SocialPetaCreativeTagRecord(
+                advertiser_name="Chime",
+                country="US",
+                creative_id="creative-1",
+                tag_category="creative_type",
+                tag_value="UGC",
+            )
+        )
+        session.commit()
+
+    monkeypatch.setattr(mcp_server, "_session_factory", lambda: session_factory)
+    server = create_mcp_server()
+
+    result = asyncio.run(server.call_tool("get_collection_status", {"advertiser_name": "Chime"}))
+    payload = decode_tool_result(result)
+
+    availability = payload["data_availability"]["advertisers"][0]
+    assert availability["socialpeta"]["has_data"] is True
+    assert availability["socialpeta"]["creative_rows"] == 1
+    assert payload["data_availability"]["summary"]["socialpeta_available"] == 1
+
+
 def test_get_geo_summary_returns_combined_visibility_citation_and_prompt_views(monkeypatch) -> None:
     session_factory = build_sqlite_session_factory()
     with session_factory() as session:
@@ -231,6 +285,89 @@ def test_get_geo_summary_returns_combined_visibility_citation_and_prompt_views(m
     assert payload["citations"]["top_cited_domains"][0]["domain"] == "chime.com"
     assert payload["prompts"]["top_by_volume"][0]["prompt"] == "Best online checking accounts"
     assert payload["prompts"]["blind_spots"][0]["prompt"] == "Best app for overdraft protection"
+
+
+def test_get_socialpeta_summary_returns_creative_and_gap_views(monkeypatch) -> None:
+    session_factory = build_sqlite_session_factory()
+    with session_factory() as session:
+        session.add_all(
+            [
+                AdvertiserRecord(name="Chime", countries_csv="US"),
+                AdvertiserRecord(name="Current", countries_csv="US"),
+            ]
+        )
+        session.add_all(
+            [
+                SocialPetaCreativeRecord(
+                    advertiser_name="Chime",
+                    country="US",
+                    creative_id="chime-1",
+                    creative_title="Chime UGC video",
+                    creative_type="Video",
+                    primary_channel="TikTok",
+                    active_days=42,
+                    impression=5000,
+                    creative_score=88,
+                    first_seen=date(2026, 3, 1),
+                    last_seen=date(2026, 4, 12),
+                ),
+                SocialPetaCreativeRecord(
+                    advertiser_name="Current",
+                    country="US",
+                    creative_id="current-1",
+                    creative_title="Current static",
+                    creative_type="Image",
+                    primary_channel="Facebook",
+                    active_days=12,
+                    impression=900,
+                    creative_score=52,
+                    first_seen=date(2026, 4, 1),
+                    last_seen=date(2026, 4, 13),
+                ),
+                SocialPetaCreativeChannelRecord(
+                    advertiser_name="Chime",
+                    country="US",
+                    creative_id="chime-1",
+                    channel="TikTok",
+                ),
+                SocialPetaCreativeChannelRecord(
+                    advertiser_name="Current",
+                    country="US",
+                    creative_id="current-1",
+                    channel="Facebook",
+                ),
+                SocialPetaCreativeTagRecord(
+                    advertiser_name="Chime",
+                    country="US",
+                    creative_id="chime-1",
+                    tag_category="creative_type",
+                    tag_value="UGC",
+                ),
+                SocialPetaCreativeTagRecord(
+                    advertiser_name="Current",
+                    country="US",
+                    creative_id="current-1",
+                    tag_category="creative_type",
+                    tag_value="Feature demo",
+                ),
+            ]
+        )
+        session.commit()
+
+    monkeypatch.setattr(mcp_server, "_session_factory", lambda: session_factory)
+    server = create_mcp_server()
+
+    result = asyncio.run(server.call_tool("get_socialpeta_summary", {"advertiser_name": "Chime"}))
+    payload = decode_tool_result(result)
+
+    assert payload["found"] is True
+    assert payload["advertiser_name"] == "Chime"
+    assert payload["summary"]["creatives"] == 1
+    assert payload["summary"]["top_primary_channel"] == "TikTok"
+    assert payload["comparison"]["gap_analysis"]["root"] == "Chime"
+    assert payload["comparison"]["gap_analysis"]["competitors"] == ["Current"]
+    assert payload["comparison"]["gap_analysis"]["video_share_gap"]["root"] == 1.0
+    assert payload["comparison"]["gap_analysis"]["video_share_gap"]["competitor_average"] == 0.0
 
 
 def test_compute_category_benchmarks_matches_multi_category_catalog_values(monkeypatch) -> None:

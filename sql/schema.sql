@@ -237,6 +237,78 @@ CREATE INDEX IF NOT EXISTS idx_otterlyai_prompts_target ON otterlyai_prompts(tar
 CREATE INDEX IF NOT EXISTS idx_otterlyai_prompts_country ON otterlyai_prompts(country_code);
 CREATE INDEX IF NOT EXISTS idx_otterlyai_prompts_engine ON otterlyai_prompts(ai_engine);
 
+CREATE TABLE IF NOT EXISTS socialpeta_creatives (
+  id SERIAL PRIMARY KEY,
+  advertiser_name VARCHAR(255) NOT NULL,
+  country VARCHAR(8) NOT NULL DEFAULT 'US',
+  creative_id VARCHAR(255) NOT NULL,
+  target_query VARCHAR(255),
+  advertiser_identifier VARCHAR(255),
+  page_name VARCHAR(255),
+  creative_title TEXT,
+  body TEXT,
+  message TEXT,
+  call_to_action VARCHAR(255),
+  creative_type VARCHAR(64),
+  ads_type INTEGER,
+  primary_channel VARCHAR(64),
+  landing_page_url TEXT,
+  preview_image_url TEXT,
+  resource_urls JSONB,
+  first_seen DATE,
+  last_seen DATE,
+  active_days INTEGER,
+  impression BIGINT,
+  popularity INTEGER,
+  creative_score INTEGER,
+  created_at_platform TIMESTAMPTZ,
+  has_page_id BOOLEAN,
+  has_store_url BOOLEAN,
+  is_page_analysis BOOLEAN,
+  is_active BOOLEAN NOT NULL DEFAULT TRUE,
+  raw_payload JSONB,
+  scraped_at TIMESTAMPTZ DEFAULT now(),
+  CONSTRAINT uq_socialpeta_creatives UNIQUE (advertiser_name, country, creative_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_socialpeta_creatives_advertiser_name ON socialpeta_creatives(advertiser_name);
+CREATE INDEX IF NOT EXISTS idx_socialpeta_creatives_country ON socialpeta_creatives(country);
+CREATE INDEX IF NOT EXISTS idx_socialpeta_creatives_type ON socialpeta_creatives(creative_type);
+CREATE INDEX IF NOT EXISTS idx_socialpeta_creatives_primary_channel ON socialpeta_creatives(primary_channel);
+CREATE INDEX IF NOT EXISTS idx_socialpeta_creatives_target_query ON socialpeta_creatives(target_query);
+CREATE INDEX IF NOT EXISTS idx_socialpeta_creatives_advertiser_identifier ON socialpeta_creatives(advertiser_identifier);
+
+CREATE TABLE IF NOT EXISTS socialpeta_creative_channels (
+  id SERIAL PRIMARY KEY,
+  advertiser_name VARCHAR(255) NOT NULL,
+  country VARCHAR(8) NOT NULL DEFAULT 'US',
+  creative_id VARCHAR(255) NOT NULL,
+  channel VARCHAR(64) NOT NULL,
+  first_seen DATE,
+  last_seen DATE,
+  active_days INTEGER,
+  scraped_at TIMESTAMPTZ DEFAULT now(),
+  CONSTRAINT uq_socialpeta_creative_channels UNIQUE (advertiser_name, country, creative_id, channel)
+);
+
+CREATE INDEX IF NOT EXISTS idx_socialpeta_creative_channels_advertiser_name ON socialpeta_creative_channels(advertiser_name);
+CREATE INDEX IF NOT EXISTS idx_socialpeta_creative_channels_channel ON socialpeta_creative_channels(channel);
+
+CREATE TABLE IF NOT EXISTS socialpeta_creative_tags (
+  id SERIAL PRIMARY KEY,
+  advertiser_name VARCHAR(255) NOT NULL,
+  country VARCHAR(8) NOT NULL DEFAULT 'US',
+  creative_id VARCHAR(255) NOT NULL,
+  tag_category VARCHAR(64) NOT NULL DEFAULT 'creative_type',
+  tag_value VARCHAR(128) NOT NULL,
+  scraped_at TIMESTAMPTZ DEFAULT now(),
+  CONSTRAINT uq_socialpeta_creative_tags UNIQUE (advertiser_name, country, creative_id, tag_category, tag_value)
+);
+
+CREATE INDEX IF NOT EXISTS idx_socialpeta_creative_tags_advertiser_name ON socialpeta_creative_tags(advertiser_name);
+CREATE INDEX IF NOT EXISTS idx_socialpeta_creative_tags_category ON socialpeta_creative_tags(tag_category);
+CREATE INDEX IF NOT EXISTS idx_socialpeta_creative_tags_value ON socialpeta_creative_tags(tag_value);
+
 CREATE TABLE IF NOT EXISTS otterlyai_citations (
   id SERIAL PRIMARY KEY,
   target_brand_or_domain_name VARCHAR(255) NOT NULL,
@@ -288,6 +360,31 @@ CREATE TABLE IF NOT EXISTS sensortower_market_top_apps (
 
 CREATE INDEX IF NOT EXISTS idx_st_market_top_apps_month ON sensortower_market_top_apps(scrape_month);
 CREATE INDEX IF NOT EXISTS idx_st_market_top_apps_category ON sensortower_market_top_apps(category);
+
+CREATE TABLE IF NOT EXISTS appfollow_reviews (
+  id                SERIAL PRIMARY KEY,
+  advertiser_name   VARCHAR(255) NOT NULL,
+  review_id         VARCHAR(255) NOT NULL,
+  review_date       DATE         NOT NULL,
+  country           VARCHAR(8)   NOT NULL DEFAULT 'US',
+  star_rating       NUMERIC(3,1),
+  username          VARCHAR(255),
+  title             TEXT,
+  body              TEXT,
+  sentiment         VARCHAR(64),
+  sentiment_score   DOUBLE PRECISION,
+  tags              JSONB,
+  app_version       VARCHAR(128),
+  os                VARCHAR(16)  NOT NULL DEFAULT 'ios',
+  appfollow_item_id VARCHAR(255),
+  scraped_at        TIMESTAMPTZ  DEFAULT now(),
+  CONSTRAINT uq_appfollow_reviews UNIQUE (advertiser_name, review_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_appfollow_reviews_advertiser ON appfollow_reviews(advertiser_name);
+CREATE INDEX IF NOT EXISTS idx_appfollow_reviews_date      ON appfollow_reviews(review_date);
+CREATE INDEX IF NOT EXISTS idx_appfollow_reviews_sentiment ON appfollow_reviews(sentiment);
+CREATE INDEX IF NOT EXISTS idx_appfollow_reviews_country   ON appfollow_reviews(country);
 
 -- Additive migrations for existing databases
 --

@@ -636,10 +636,9 @@
       <li><a href="#tool-full-comparison" class="toc-h3">get_full_comparison</a></li>
       <li><a href="#tool-timeseries" class="toc-h3">get_metric_timeseries</a></li>
       <li><a href="#tool-market-top-apps" class="toc-h3">get_market_top_apps</a></li>
-      <li><a href="#tool-health" class="toc-h3">get_collection_status</a></li>
-      <li><a href="#tool-geo-summary" class="toc-h3">get_geo_summary</a></li>
-      <li><a href="#tool-geo-compare" class="toc-h3">compare_geo_visibility</a></li>
-      <li><a href="#tool-geo-availability" class="toc-h3">get_geo_data_availability</a></li>
+      <li><a href="#tool-health" class="toc-h3">get_collection_health</a></li>
+      <li><a href="#tool-alerts" class="toc-h3">get_collection_alerts</a></li>
+      <li><a href="#tool-runs" class="toc-h3">get_recent_collection_runs</a></li>
       <li><a href="#tool-request" class="toc-h3">request_advertiser</a></li>
       <li><a href="#tool-list-requested" class="toc-h3">list_requested_advertisers</a></li>
       <li><a href="#tool-schema" class="toc-h3">read_schema_text</a></li>
@@ -660,7 +659,7 @@
     <!-- Hero -->
     <div class="hero">
       <h1>AdIntel MCP</h1>
-      <p>Advertiser intelligence for AI assistants — powered by <strong>Sensor Tower</strong> data, hosted as a read-only MCP server.</p>
+      <p>Advertiser intelligence for AI assistants — powered by <strong>Sensor Tower, Otterly.AI</strong> data, hosted as a read-only MCP server.</p>
       <div class="endpoint-badge">
         <span class="dot"></span>
         https://adintel-delta.vercel.app/
@@ -701,11 +700,11 @@
         </div>
         <div class="capability-item">
           <span class="capability-icon">🏥</span>
-          <div><strong>Check collection status</strong><span>Health, alerts, and recent run history in one call</span></div>
+          <div><strong>Check data health</strong><span>Staleness, failures, and alerts per advertiser</span></div>
         </div>
         <div class="capability-item">
-          <span class="capability-icon">🤖</span>
-          <div><strong>Analyze GEO visibility</strong><span>AI search visibility, citations, blind spots, and engine breakdown</span></div>
+          <span class="capability-icon">🗂️</span>
+          <div><strong>Inspect collection runs</strong><span>Recent run history with status and record counts</span></div>
         </div>
         <div class="capability-item">
           <span class="capability-icon">➕</span>
@@ -931,7 +930,7 @@ url = "https://adintel-delta.vercel.app/"</code></pre>
               <tr><td><code>country</code></td><td>string</td><td><code>null</code></td><td>ISO country code to filter results (e.g. <code>"US"</code>, <code>"BR"</code>)</td></tr>
             </tbody>
           </table>
-          <div class="returns"><strong>Returns:</strong> Downloads, DAU, retention, impression share, rankings, demographics, reviews, review texts, creatives, and ASO keywords — plus <code>category_benchmarks</code> and a lightweight <code>geo_snapshot</code> when available.</div>
+          <div class="returns"><strong>Returns:</strong> Downloads, DAU, retention, impression share, rankings, demographics, reviews, review texts, creatives, and ASO keywords — all at latest available date.</div>
         </div>
       </div>
 
@@ -947,10 +946,9 @@ url = "https://adintel-delta.vercel.app/"</code></pre>
             <tbody>
               <tr><td><code>advertiser_names</code></td><td>string</td><td><span class="required">required</span></td><td>Comma-separated names — e.g. <code>"Binance, Coinbase, Kraken"</code></td></tr>
               <tr><td><code>country</code></td><td>string</td><td><code>"US"</code></td><td>ISO country code</td></tr>
-              <tr><td><code>days</code></td><td>integer</td><td><code>30</code></td><td>Timeseries window for downloads, DAU, and ad-network trends (max 90)</td></tr>
             </tbody>
           </table>
-          <div class="returns"><strong>Returns:</strong> Per-advertiser snapshots, 30-day downloads and DAU trends, per-network SOV with trends, advertiser <code>category_benchmarks</code>, advertiser <code>geo_snapshot</code>, and a server-computed <code>gap_analysis</code>.</div>
+          <div class="returns"><strong>Returns:</strong> 30-day timeseries for downloads and DAU per advertiser, per-network SOV with trends, and a server-computed <code>gap_analysis</code> — exclusive networks, SOV ratios, efficiency indicators, and pre-written opportunity bullets.</div>
         </div>
       </div>
 
@@ -988,91 +986,66 @@ url = "https://adintel-delta.vercel.app/"</code></pre>
             <tbody>
               <tr><td><code>category</code></td><td>string</td><td><code>"Finance"</code></td><td>Category name (e.g. <code>"Finance"</code>, <code>"Games"</code>) or numeric ID (e.g. <code>"6015"</code>)</td></tr>
               <tr><td><code>country</code></td><td>string</td><td><code>"US"</code></td><td>ISO country code</td></tr>
-              <tr><td><code>sort_by</code></td><td>string</td><td><code>"downloads"</code></td><td>One of: <code>rank</code>, <code>downloads</code>, <code>revenue</code>, <code>dau</code>, <code>impression_share</code></td></tr>
-              <tr><td><code>limit</code></td><td>integer</td><td><code>20</code></td><td>Max apps to return (max 100)</td></tr>
+              <tr><td><code>sort_by</code></td><td>string</td><td><code>"rank"</code></td><td>One of: <code>rank</code>, <code>downloads</code>, <code>revenue</code>, <code>dau</code>, <code>impression_share</code></td></tr>
+              <tr><td><code>limit</code></td><td>integer</td><td><code>25</code></td><td>Max apps to return (max 100)</td></tr>
               <tr><td><code>scrape_month</code></td><td>string</td><td><code>null</code></td><td>Filter to a specific month — <code>YYYY-MM-DD</code> (defaults to latest)</td></tr>
-              <tr><td><code>network_filter</code></td><td>string</td><td><code>null</code></td><td>Only show apps advertising on a specific network such as <code>"tiktok"</code> or <code>"admob"</code></td></tr>
-              <tr><td><code>min_downloads</code></td><td>integer</td><td><code>null</code></td><td>Exclude small apps below a download threshold</td></tr>
-              <tr><td><code>app_category</code></td><td>string</td><td><code>null</code></td><td>Cross-category filter using the app's primary category, e.g. <code>"Finance"</code></td></tr>
             </tbody>
           </table>
           <div class="returns"><strong>Returns:</strong> Ranked list of apps with <code>app_name</code>, <code>publisher_name</code>, <code>downloads</code>, <code>revenue</code>, <code>dau</code>, <code>impression_share</code>, and boolean ad-network presence flags (AdMob, Facebook, TikTok, YouTube, AppLovin, Unity, Mintegral, Snapchat, Instagram).</div>
         </div>
       </div>
 
-      <!-- get_collection_status -->
+      <!-- get_collection_health -->
       <div class="tool-card" id="tool-health">
         <div class="tool-header">
-          <span class="tool-name">get_collection_status</span>
-          <span class="tool-desc">Collection health, active alerts, and recent run history in one call.</span>
+          <span class="tool-name">get_collection_health</span>
+          <span class="tool-desc">Data freshness, last success, consecutive failures, and recent errors.</span>
         </div>
         <div class="tool-body">
           <table>
             <thead><tr><th>Parameter</th><th>Type</th><th>Default</th><th>Description</th></tr></thead>
             <tbody>
               <tr><td><code>advertiser_name</code></td><td>string</td><td><code>null</code></td><td>Specific advertiser, or omit to check all</td></tr>
+            </tbody>
+          </table>
+          <div class="returns"><strong>Returns:</strong> Health record per advertiser with <code>hours_since_success</code>, <code>consecutive_failures</code>, and last error message.</div>
+        </div>
+      </div>
+
+      <!-- get_collection_alerts -->
+      <div class="tool-card" id="tool-alerts">
+        <div class="tool-header">
+          <span class="tool-name">get_collection_alerts</span>
+          <span class="tool-desc">Active alerts — stale data, repeated failures, never-collected advertisers.</span>
+        </div>
+        <div class="tool-body">
+          <table>
+            <thead><tr><th>Parameter</th><th>Type</th><th>Default</th><th>Description</th></tr></thead>
+            <tbody>
               <tr><td><code>stale_hours</code></td><td>number</td><td><code>48</code></td><td>Hours threshold to flag data as stale</td></tr>
               <tr><td><code>max_consecutive_failures</code></td><td>integer</td><td><code>3</code></td><td>Failure count threshold to trigger alert</td></tr>
-              <tr><td><code>include_run_history</code></td><td>boolean</td><td><code>true</code></td><td>Whether to include recent scrape runs in the response</td></tr>
-              <tr><td><code>platform</code></td><td>string</td><td><code>null</code></td><td>Optional run-history filter by platform (e.g. <code>"sensortower"</code>, <code>"otterlyai"</code>)</td></tr>
-              <tr><td><code>run_history_limit</code></td><td>integer</td><td><code>20</code></td><td>Max recent runs returned (max 100)</td></tr>
             </tbody>
           </table>
-          <div class="returns"><strong>Returns:</strong> Combined payload with advertiser health records, active alerts, thresholds, and optional <code>recent_runs</code> history including status, timing, and metadata.</div>
+          <div class="returns"><strong>Returns:</strong> List of active alerts with severity (<code>critical</code> / <code>warning</code>) and type.</div>
         </div>
       </div>
 
-      <!-- get_geo_summary -->
-      <div class="tool-card" id="tool-geo-summary">
+      <!-- get_recent_collection_runs -->
+      <div class="tool-card" id="tool-runs">
         <div class="tool-header">
-          <span class="tool-name">get_geo_summary</span>
-          <span class="tool-desc">Standalone GEO analysis for one advertiser across AI search engines.</span>
+          <span class="tool-name">get_recent_collection_runs</span>
+          <span class="tool-desc">Recent collection job history with status, timing, and per-metric record counts.</span>
         </div>
         <div class="tool-body">
           <table>
             <thead><tr><th>Parameter</th><th>Type</th><th>Default</th><th>Description</th></tr></thead>
             <tbody>
-              <tr><td><code>advertiser_name</code></td><td>string</td><td><span class="required">required</span></td><td>Tracked advertiser name or matching domain</td></tr>
-              <tr><td><code>country</code></td><td>string</td><td><code>null</code></td><td>Optional ISO country code filter</td></tr>
-              <tr><td><code>limit</code></td><td>integer</td><td><code>20</code></td><td>Max rows for top prompts / cited domains sections (max 100)</td></tr>
+              <tr><td><code>advertiser_name</code></td><td>string</td><td><code>null</code></td><td>Filter by advertiser, or omit for all</td></tr>
+              <tr><td><code>platform</code></td><td>string</td><td><code>null</code></td><td>Filter by platform (e.g. <code>"sensortower"</code>)</td></tr>
+              <tr><td><code>limit</code></td><td>integer</td><td><code>20</code></td><td>Number of runs to return (max 100)</td></tr>
             </tbody>
           </table>
-          <div class="returns"><strong>Returns:</strong> GEO visibility overview, engine breakdown, sentiment distribution, top cited domains, citation categories, top prompts by volume, blind spots, and negative-sentiment prompts.</div>
-        </div>
-      </div>
-
-      <!-- compare_geo_visibility -->
-      <div class="tool-card" id="tool-geo-compare">
-        <div class="tool-header">
-          <span class="tool-name">compare_geo_visibility</span>
-          <span class="tool-desc">Side-by-side GEO visibility comparison for two or more advertisers.</span>
-        </div>
-        <div class="tool-body">
-          <table>
-            <thead><tr><th>Parameter</th><th>Type</th><th>Default</th><th>Description</th></tr></thead>
-            <tbody>
-              <tr><td><code>advertiser_names</code></td><td>string</td><td><span class="required">required</span></td><td>Comma-separated names, e.g. <code>"Binance, Coinbase, Kraken"</code></td></tr>
-              <tr><td><code>country</code></td><td>string</td><td><code>null</code></td><td>Optional ISO country code filter</td></tr>
-            </tbody>
-          </table>
-          <div class="returns"><strong>Returns:</strong> Advertiser-by-advertiser GEO visibility comparison with blind spots, engine gaps, competitor overlap, and GEO-specific opportunities.</div>
-        </div>
-      </div>
-
-      <!-- get_geo_data_availability -->
-      <div class="tool-card" id="tool-geo-availability">
-        <div class="tool-header">
-          <span class="tool-name">get_geo_data_availability</span>
-          <span class="tool-desc">Shows what GEO data is available and how complete it is.</span>
-        </div>
-        <div class="tool-body">
-          <table>
-            <thead><tr><th>Parameter</th><th>Type</th><th>Default</th><th>Description</th></tr></thead>
-            <tbody>
-              <tr><td><code>advertiser_name</code></td><td>string</td><td><code>null</code></td><td>Optional advertiser filter, or omit for all tracked GEO brands</td></tr>
-            </tbody>
-          </table>
-          <div class="returns"><strong>Returns:</strong> GEO brand coverage, engines tracked, countries covered, date range, row counts, and field completeness gaps.</div>
+          <div class="returns"><strong>Returns:</strong> Run records with <code>status</code>, <code>started_at</code>, <code>finished_at</code>, <code>message</code>, and metadata including records written per metric.</div>
         </div>
       </div>
 
@@ -1156,14 +1129,8 @@ url = "https://adintel-delta.vercel.app/"</code></pre>
       <div class="question-group">
         <h3>Competitive Analysis</h3>
         <div class="question-card">"Compare MonopolyGo and ScrabbleGo. Pull 30-day download trends, DAU, revenue, and ad impression share for each. Which ad networks does MonopolyGo run on that ScrabbleGo doesn't? Where is the biggest gap in coverage?"</div>
-        <div class="question-card">"For Binance, Coinbase, and Kraken in the US, compare the latest downloads and usage. Tell me which looks strongest, show the 30-day trend, and flag any collection-status issues."</div>
+        <div class="question-card">"For Binance, Coinbase, and Kraken in the US, compare the latest downloads and usage. Tell me which looks strongest, show the 30-day trend, and flag any data health issues."</div>
         <div class="question-card">"Which finance apps in AdIntel have the highest impression share on TikTok? Which ones have zero presence there — and what does that mean for their UA strategy?"</div>
-      </div>
-
-      <div class="question-group">
-        <h3>GEO Analysis</h3>
-        <div class="question-card">"Give me a GEO summary for Chime: visibility rate, top cited domains, engine breakdown, and biggest blind spots."</div>
-        <div class="question-card">"Compare GEO visibility for Binance, Coinbase, and Kraken. Which brand wins overall, and where are the engine-by-engine gaps?"</div>
       </div>
 
       <div class="question-group">
@@ -1180,8 +1147,8 @@ url = "https://adintel-delta.vercel.app/"</code></pre>
 
       <div class="question-group">
         <h3>Operations &amp; Health</h3>
-        <div class="question-card">"Which advertisers have stale data or repeated collection failures? Show severity, recent run history, and how long since the last successful run."</div>
-        <div class="question-card">"Show me the collection status for MonopolyGo and include the last 5 runs. Tell me if any failed or had partial results."</div>
+        <div class="question-card">"Which advertisers have stale data or repeated collection failures? Show severity and how long since the last successful run."</div>
+        <div class="question-card">"Show me the last 5 collection runs for MonopolyGo and tell me if any failed or had partial results."</div>
       </div>
     </section>
 
@@ -1264,7 +1231,7 @@ url = "https://adintel-delta.vercel.app/"</code></pre>
         <code>get_advertiser_summary</code> surfaces all per-advertiser domains at once. <code>get_full_comparison</code> adds computed gap analysis across 2+ advertisers.<br>
         <code>get_market_top_apps</code> covers all apps in a category (not just tracked ones). <code>run_query</code> gives direct SQL access to every table.<br>
         Most advertisers tracked in <strong>US</strong> only. Binance is also tracked in <strong>TR, BR, NG</strong>.<br>
-        Coverage varies by advertiser — check <code>get_collection_status</code> or <code>get_geo_data_availability</code> if results look sparse.
+        Coverage varies by advertiser — check <code>get_collection_health</code> if results look sparse.
       </p>
     </section>
 
@@ -1321,7 +1288,7 @@ url = "https://adintel-delta.vercel.app/"</code></pre>
       <ul>
         <li>Advertiser name matching is <strong>fuzzy</strong> — "chime" and "Chme" both resolve to "Chime" automatically. If a typo is ambiguous, the server will return a suggestions list instead of guessing</li>
         <li>If an advertiser is missing, use <code>request_advertiser</code> to keep the onboarding queue visible to the whole team</li>
-        <li>If results look empty or sparse, check <code>get_collection_status</code> before assuming there's no data — the advertiser may have a recent collection failure</li>
+        <li>If results look empty or sparse, check <code>get_collection_health</code> before assuming there's no data — the advertiser may have a recent collection failure</li>
         <li>The MCP is read-only — it reflects what is already in the shared database</li>
         <li>Use <code>run_query</code> + <code>read_schema_text</code> together for ad-hoc analysis not covered by the built-in tools</li>
       </ul>

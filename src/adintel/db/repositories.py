@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from adintel.core.models import AdvertiserProfile
 from adintel.db.models import (
+    AppFollowReviewRecord,
     AdvertiserRecord,
     OtterlyCitationRecord,
     OtterlyPromptRecord,
@@ -25,6 +26,9 @@ from adintel.db.models import (
     SensorTowerMarketTopAppRecord,
     SensorTowerRetentionRecord,
     SensorTowerUsageRecord,
+    SocialPetaCreativeChannelRecord,
+    SocialPetaCreativeRecord,
+    SocialPetaCreativeTagRecord,
 )
 
 
@@ -640,4 +644,46 @@ class OtterlyRepository:
                 "cited_url",
                 "query_window_end_date",
             ],
+        )
+
+
+class SocialPetaRepository:
+    def __init__(self, session: Session) -> None:
+        self.session = session
+
+    def upsert_creatives(self, rows: list[dict]) -> int:
+        return _bulk_upsert(
+            self.session,
+            SocialPetaCreativeRecord,
+            rows,
+            conflict_columns=["advertiser_name", "country", "creative_id"],
+        )
+
+    def upsert_creative_channels(self, rows: list[dict]) -> int:
+        return _bulk_upsert(
+            self.session,
+            SocialPetaCreativeChannelRecord,
+            rows,
+            conflict_columns=["advertiser_name", "country", "creative_id", "channel"],
+        )
+
+    def upsert_creative_tags(self, rows: list[dict]) -> int:
+        return _bulk_upsert(
+            self.session,
+            SocialPetaCreativeTagRecord,
+            rows,
+            conflict_columns=["advertiser_name", "country", "creative_id", "tag_category", "tag_value"],
+        )
+
+
+class AppFollowRepository:
+    def __init__(self, session: Session) -> None:
+        self.session = session
+
+    def upsert_reviews(self, rows: list[dict]) -> int:
+        return _bulk_upsert(
+            self.session,
+            AppFollowReviewRecord,
+            rows,
+            conflict_columns=["advertiser_name", "review_id"],
         )

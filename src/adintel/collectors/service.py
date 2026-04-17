@@ -11,6 +11,9 @@ from adintel.core.browser import BrowserManager
 from adintel.core.models import AdvertiserProfile, CollectorRunRequest, CollectorRunResult, PlatformName
 from adintel.core.settings import AppSettings
 from adintel.db.repositories import CollectionHealthRepository, ScrapeRunRepository
+from adintel.platforms.appfollow import AppFollowCollector
+from adintel.platforms.otterly import OtterlyCollector
+from adintel.platforms.socialpeta import SocialPetaCollector
 from adintel.platforms.sensortower import SensorTowerCollector
 
 
@@ -21,6 +24,9 @@ class CollectorService:
         browser = BrowserManager(settings)
         self.collectors = {
             PlatformName.SENSORTOWER: SensorTowerCollector(settings, browser, session),
+            PlatformName.OTTERLY: OtterlyCollector(settings, browser, session),
+            PlatformName.SOCIALPETA: SocialPetaCollector(settings, browser, session),
+            PlatformName.APPFOLLOW: AppFollowCollector(settings, browser, session),
         }
         self.runs = ScrapeRunRepository(session)
 

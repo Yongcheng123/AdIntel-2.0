@@ -124,6 +124,35 @@ OtterlyAI data also uses provider-prefixed table names:
 - `otterlyai_citations`
   - cited URL rows by brand/domain, country, engine, and query window
 
+### SocialPeta Tables
+
+For competitor creative strategy work, SocialPeta should be stored in three provider-prefixed tables:
+
+- `socialpeta_creatives`
+  - one row per creative from SocialPeta `creative/list`, including verified fields like `ad_key`, `advertiser_name`, `ecom_advertiser_id`, `page_name`, `title`, `body`, `message`, `call_to_action`, `platform`, `first_seen`, `last_seen`, `days_count`, `impression`, `heat`, `all_exposure_value`, `preview_img_url`, `resource_urls`, and `raw_payload`
+- `socialpeta_creative_channels`
+  - one row per creative-channel pair so you can measure distribution across TikTok, Meta, Unity, and other channels from fields like `fb_merge_channel`
+- `socialpeta_creative_tags`
+  - reserved for future per-creative tag enrichment after tag assignment fields are verified
+
+### SocialPeta Competitor Groups
+
+Use `config/advertisers.yaml` as the source of truth for individual advertisers and a second file such as `config/socialpeta_groups.yaml` to define comparison sets.
+
+Example:
+
+```yaml
+groups:
+  - advertiser: Chime
+    country: US
+    competitors:
+      - Current
+      - Dave
+      - MoneyLion
+```
+
+This lets collection stay brand-by-brand while analysis can automatically look up the competitor set for a target advertiser.
+
 ### Naming Convention
 
 Use this naming convention going forward:
@@ -394,6 +423,118 @@ Important:
 
 ## Collection Workflow
 
+### Platform Runbook (Recommended Commands)
+
+Use this section as the quick reference for future runs.
+
+#### SensorTower
+
+Login (once per session):
+
+```bash
+./.venv/bin/adintel login sensortower
+```
+
+Run all advertisers from `config/advertisers.yaml`:
+
+```bash
+bash scripts/run_local_to_server.sh
+```
+
+Run one advertiser:
+
+```bash
+RUN_ALL_FROM_CONFIG=false ADVERTISER_NAME=Chime bash scripts/run_local_to_server.sh
+```
+
+#### Otterly
+
+Run batch from `config/otterly_batch.yaml`:
+
+```bash
+bash scripts/run_otterly_batch.sh
+```
+
+Use a different batch config:
+
+```bash
+CONFIG_FILE=config/otterly_batch.yaml bash scripts/run_otterly_batch.sh
+```
+
+#### SocialPeta
+
+Login (once per session):
+
+```bash
+./.venv/bin/adintel login socialpeta
+```
+
+Run only missing advertisers (default, recommended for daily use):
+
+```bash
+bash scripts/run_socialpeta_to_server.sh
+```
+
+Force full refresh for all configured advertisers:
+
+```bash
+MODE=all bash scripts/run_socialpeta_to_server.sh
+```
+
+Run one advertiser only:
+
+```bash
+RUN_ALL_FROM_CONFIG=false ADVERTISER_NAME=Chime bash scripts/run_socialpeta_to_server.sh
+```
+
+#### AppFollow
+
+Login (once per session):
+
+```bash
+./.venv/bin/adintel login appfollow
+```
+
+Run only missing advertisers (default, recommended for daily use):
+
+```bash
+bash scripts/run_appfollow_to_server.sh
+```
+
+Force full refresh for all configured advertisers:
+
+```bash
+MODE=all bash scripts/run_appfollow_to_server.sh
+```
+
+Test one batch:
+
+```bash
+TEST=true bash scripts/run_appfollow_to_server.sh
+```
+
+### Check Latest Run Status
+
+After any collection run, check recent statuses:
+
+```bash
+./.venv/bin/python - <<'PY'
+from sqlalchemy import create_engine, text
+from adintel.core.settings import get_settings
+
+engine = create_engine(get_settings().database_url)
+with engine.connect() as conn:
+    rows = conn.execute(text("""
+        SELECT id, advertiser_name, platform, status, started_at, finished_at
+        FROM scrape_runs
+        ORDER BY id DESC
+        LIMIT 20
+    """)).fetchall()
+    for row in rows:
+        print(tuple(row))
+PY
+```
+
 ### Login To SensorTower
 
 ```bash
@@ -402,11 +543,43 @@ Important:
 
 This saves local browser state under `state/browser/`.
 
+### Login To Otterly
+
+```bash
+./.venv/bin/adintel login otterly
+```
+
+This saves local browser state under `state/browser/otterly`.
+
+### Login To SocialPeta
+
+```bash
+./.venv/bin/adintel login socialpeta
+```
+
+This saves local browser state under `state/browser/socialpeta`.
+
 ### Collect One Advertiser
 
 ```bash
 ./.venv/bin/adintel collect advertiser Chime --platform sensortower --verbose
 ```
+
+### Collect SocialPeta Display Ads
+
+```bash
+./.venv/bin/adintel collect socialpeta-display-ads --query "temu" --pages 3 --verbose
+```
+
+This uses the verified `display-ads` JSON API behind the logged-in page and saves rows into `socialpeta_creatives` and `socialpeta_creative_channels`.
+
+### Run SocialPeta Batch Collection
+
+```bash
+./scripts/run_socialpeta_to_server.sh
+```
+
+This reads advertisers from `config/advertisers.yaml`, looks up competitor sets from `config/socialpeta_groups.yaml`, dedupes overlapping targets, and saves SocialPeta display-ad data into the database.
 
 ### Collect Stale Advertisers
 
