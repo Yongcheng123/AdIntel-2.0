@@ -641,6 +641,7 @@ def _socialpeta_snapshot(session, advertiser_name: str, country: str | None = No
     primary_channel_counts = Counter((row.primary_channel or "unknown") for row in rows)
     channel_counts = Counter(row.channel for row in channels if row.channel)
     tag_counts = Counter(f"{row.tag_category}:{row.tag_value}" for row in tags if row.tag_value)
+    total_creatives = len(rows)
     video_count = sum(1 for row in rows if (row.creative_type or "").casefold() == "video")
     image_count = sum(1 for row in rows if (row.creative_type or "").casefold() == "image")
     long_running_count = sum(1 for row in rows if (row.active_days or 0) >= 30)
@@ -665,7 +666,10 @@ def _socialpeta_snapshot(session, advertiser_name: str, country: str | None = No
         "last_seen": last_seen.isoformat() if last_seen else None,
         "primary_channel_distribution": dict(primary_channel_counts),
         "channel_distribution": dict(channel_counts),
-        "tag_distribution": dict(tag_counts),
+        "tag_distribution": {
+            tag: {"count": cnt, "prevalence_pct": round(cnt / total_creatives, 4) if total_creatives else 0}
+            for tag, cnt in tag_counts.items()
+        },
         "top_primary_channel": primary_channel_counts.most_common(1)[0][0] if primary_channel_counts else None,
         "top_channel": channel_counts.most_common(1)[0][0] if channel_counts else None,
         "top_tag": tag_counts.most_common(1)[0][0] if tag_counts else None,
@@ -1478,7 +1482,7 @@ def create_mcp_server() -> FastMCP:
             "Compare multiple advertisers using SocialPeta display-ad creative data. "
             "The comparison includes creative volume, video/image mix, average active duration, "
             "channel blind spots, and tag blind spots. "
-            "Pass advertiser_names as a comma-separated list."
+            "Pass advertiser_names as a comma-separated string (e.g. 'Chime,Dave,Current')."
         ),
     )
     def get_socialpeta_comparison(advertiser_names: str, country: str | None = None) -> str:
@@ -1660,7 +1664,9 @@ def create_mcp_server() -> FastMCP:
         description=(
             "Get daily time-series data for a specific metric and advertiser. "
             "Available metrics: downloads, usage, retention, impression_share, rankings, reviews. "
-            "Returns up to 90 days of daily data points for trend analysis."
+            "Returns up to `days` most-recent rows (default 90). "
+            "Optionally narrow with start_date/end_date (ISO format: YYYY-MM-DD). "
+            "country defaults to 'US'; pass a valid ISO-2 code to change."
         ),
     )
     def get_metric_timeseries(
@@ -1669,7 +1675,7 @@ def create_mcp_server() -> FastMCP:
         country: str = "US",
         start_date: str | None = None,
         end_date: str | None = None,
-        limit: int = 90,
+        days: int = 90,
     ) -> str:
         if metric not in _METRIC_MAP:
             return json.dumps({
@@ -1706,7 +1712,7 @@ def create_mcp_server() -> FastMCP:
                 q = q.where(date_col <= date.fromisoformat(end_date))
 
             rows = session.scalars(
-                q.order_by(desc(date_col)).limit(limit)
+                q.order_by(desc(date_col)).limit(days)
             ).all()
 
         data_points = []
@@ -1731,9 +1737,11 @@ def create_mcp_server() -> FastMCP:
         name="get_full_comparison",
         description=(
             "Full competitive comparison for two or more advertisers. "
-            "Returns 30-day timeseries for downloads and DAU, per-network ad impression share with trends, "
+            "Pass advertiser_names as a comma-separated string (e.g. 'Chime,Dave,Current'). "
+            "Returns timeseries for downloads and DAU, per-network ad impression share (latest SOV + 7-day avg), "
             "and a server-computed gap_analysis with exclusive networks, SOV ratios, efficiency indicators, "
-            "and opportunity bullets. Use this for any competitive analysis task."
+            "retention gaps, review rating gaps, demographics, GEO visibility gaps, and opportunity bullets. "
+            "Use this for any competitive analysis task."
         ),
     )
     def get_full_comparison(
@@ -1891,6 +1899,38 @@ def create_mcp_server() -> FastMCP:
                         client_networks=client_net_set,
                     )
 
+                # ── AppFollow sentiment snapshot ───────────────────────
+                from datetime import timedelta
+                af_cutoff = date.today() - timedelta(days=days)
+                af_sent_q = (
+                    select(
+                        AppFollowReviewRecord.sentiment,
+                        func.count().label("cnt"),
+                        func.avg(AppFollowReviewRecord.star_rating).label("avg_rating"),
+                    )
+                    .where(AppFollowReviewRecord.advertiser_name == canonical_name)
+                    .where(AppFollowReviewRecord.review_date >= af_cutoff)
+                    .where(AppFollowReviewRecord.sentiment.isnot(None))
+                    .group_by(AppFollowReviewRecord.sentiment)
+                )
+                if country:
+                    af_sent_q = af_sent_q.where(AppFollowReviewRecord.country == country)
+                af_rows = session.execute(af_sent_q).all()
+                appfollow_sentiment: dict | None = None
+                if af_rows:
+                    total_af = sum(r.cnt for r in af_rows)
+                    appfollow_sentiment = {
+                        "total_reviews": total_af,
+                        "sentiment_distribution": {
+                            r.sentiment: {
+                                "count": r.cnt,
+                                "pct": round(r.cnt / total_af, 4) if total_af else 0,
+                                "avg_rating": round(float(r.avg_rating), 2) if r.avg_rating else None,
+                            }
+                            for r in af_rows
+                        },
+                    }
+
                 advertiser_data[canonical_name] = {
                     "found": True,
                     **_resolved_info(advertiser),
@@ -1904,6 +1944,7 @@ def create_mcp_server() -> FastMCP:
                         "total_sov": snapshot["total_sov"],
                         "network_count": len(networks_map),
                     },
+                    "appfollow_sentiment": appfollow_sentiment,
                     "geo_snapshot": geo_snap,
                     "category_benchmarks": cat_bench,
                 }
@@ -2079,6 +2120,35 @@ def create_mcp_server() -> FastMCP:
                     "opportunities": geo_opportunities,
                 }
 
+            # AppFollow sentiment gap
+            appfollow_gap: dict = {}
+            advertisers_with_af = {
+                n: d["appfollow_sentiment"]
+                for n, d in found.items()
+                if d.get("appfollow_sentiment")
+            }
+            if len(advertisers_with_af) >= 2:
+                positive_rates = {
+                    n: af["sentiment_distribution"].get("positive", {}).get("pct", 0)
+                    for n, af in advertisers_with_af.items()
+                }
+                negative_rates = {
+                    n: af["sentiment_distribution"].get("negative", {}).get("pct", 0)
+                    for n, af in advertisers_with_af.items()
+                }
+                best_positive = max(positive_rates, key=lambda n: positive_rates[n])
+                most_negative = max(negative_rates, key=lambda n: negative_rates[n])
+                appfollow_gap = {
+                    "positive_rate": positive_rates,
+                    "negative_rate": negative_rates,
+                    "most_positive": best_positive,
+                    "most_negative": most_negative,
+                    "insight": (
+                        f"{best_positive} leads in positive AppFollow sentiment ({positive_rates[best_positive]:.0%}); "
+                        f"{most_negative} has highest negative rate ({negative_rates[most_negative]:.0%})"
+                    ),
+                }
+
             gap_analysis = {
                 "network_coverage": {
                     n: {"exclusive": exclusive[n], "shared_with_others": sorted(shared)}
@@ -2099,6 +2169,7 @@ def create_mcp_server() -> FastMCP:
                 },
                 "retention_gap": retention_gap,
                 "review_rating_gap": rating_gap,
+                "appfollow_sentiment_gap": appfollow_gap,
                 "demographics_comparison": demographics_gap,
                 "geo_gaps": geo_gaps,
                 "opportunities": opportunities,
@@ -2497,18 +2568,19 @@ def create_mcp_server() -> FastMCP:
                 for row in session.execute(cat_q).all()
             ]
 
-            # Competitors appearing in citations
-            comp_q = (
-                select(OtterlyCitationRecord.competitors)
+            # Competitors appearing in citations — aggregate in SQL
+            cit_comp_col = func.jsonb_array_elements_text(OtterlyCitationRecord.competitors).column_valued("comp")
+            cit_comp_q = (
+                select(cit_comp_col, func.count().label("cnt"))
                 .where(OtterlyCitationRecord.target_brand_or_domain_name == advertiser_name)
                 .where(OtterlyCitationRecord.competitors.isnot(None))
+                .group_by(cit_comp_col)
+                .order_by(desc("cnt"))
+                .limit(10)
             )
             if country:
-                comp_q = comp_q.where(OtterlyCitationRecord.country_code == country.lower())
-            all_competitors: dict[str, int] = {}
-            for comp_list in session.scalars(comp_q).all():
-                for comp in (comp_list or []):
-                    all_competitors[comp] = all_competitors.get(comp, 0) + 1
+                cit_comp_q = cit_comp_q.where(OtterlyCitationRecord.country_code == country.lower())
+            all_competitors: dict[str, int] = {row.comp: row.cnt for row in session.execute(cit_comp_q).all()}
 
             # ── Prompt insights ──────────────────────────────────────
             prompt_q = (
@@ -2611,6 +2683,7 @@ def create_mcp_server() -> FastMCP:
             "Side-by-side GEO visibility comparison for 2+ brands. "
             "Shows who is winning in AI search, engine-by-engine gap analysis, "
             "sentiment comparison, competitor overlap, and blind spots. "
+            "Pass advertiser_names as a comma-separated string (e.g. 'Chime,Dave,Current'). "
             "Use for competitive GEO analysis."
         ),
     )
@@ -2650,20 +2723,19 @@ def create_mcp_server() -> FastMCP:
                 engines = _geo_engine_breakdown(session, name, country)
                 sentiment = _geo_sentiment_distribution(session, name, country)
 
-                # Load only the competitors JSON column for aggregation
-                comp_q = (
-                    select(OtterlyPromptRecord.competitors)
+                # Aggregate competitors in SQL via jsonb_array_elements_text
+                comp_col = func.jsonb_array_elements_text(OtterlyPromptRecord.competitors).column_valued("comp")
+                comp_agg_q = (
+                    select(comp_col, func.count().label("cnt"))
                     .where(OtterlyPromptRecord.target_brand_or_domain_name == name)
                     .where(OtterlyPromptRecord.competitors.isnot(None))
+                    .group_by(comp_col)
+                    .order_by(desc("cnt"))
+                    .limit(10)
                 )
                 if country:
-                    comp_q = comp_q.where(OtterlyPromptRecord.country_code == country.lower())
-                comp_rows = session.scalars(comp_q).all()
-
-                all_competitors: dict[str, int] = {}
-                for comp_list in comp_rows:
-                    for comp in (comp_list or []):
-                        all_competitors[comp] = all_competitors.get(comp, 0) + 1
+                    comp_agg_q = comp_agg_q.where(OtterlyPromptRecord.country_code == country.lower())
+                top_competitors = {row.comp: row.cnt for row in session.execute(comp_agg_q).all()}
 
                 advertiser_data[name] = {
                     "found": True,
@@ -2672,9 +2744,7 @@ def create_mcp_server() -> FastMCP:
                     "visibility_rate": round(cited / total, 4) if total > 0 else 0,
                     "engine_breakdown": engines,
                     "sentiment_distribution": sentiment,
-                    "top_competitors_mentioned": dict(
-                        sorted(all_competitors.items(), key=lambda x: x[1], reverse=True)[:10]
-                    ),
+                    "top_competitors_mentioned": top_competitors,
                 }
 
             # Gap analysis across advertisers
@@ -2902,7 +2972,18 @@ def create_mcp_server() -> FastMCP:
         with _session_factory()() as session:
             repo = AdvertiserRepository(session)
             advertiser = repo.resolve(advertiser_name)
-            resolved_name = advertiser.name if advertiser else advertiser_name
+            if advertiser is None:
+                suggestions = repo.suggest(advertiser_name)
+                return json.dumps({
+                    "found": False,
+                    "advertiser_name": advertiser_name,
+                    "message": (
+                        f"No advertiser found for '{advertiser_name}'. Did you mean: "
+                        + ", ".join(f"'{s}'" for s in suggestions) + "?"
+                    ) if suggestions else f"No advertiser found for '{advertiser_name}'.",
+                    "did_you_mean": suggestions,
+                }, indent=2)
+            resolved_name = advertiser.name
 
             q = (
                 select(AppFollowReviewRecord)
@@ -2973,7 +3054,18 @@ def create_mcp_server() -> FastMCP:
         with _session_factory()() as session:
             repo = AdvertiserRepository(session)
             advertiser = repo.resolve(advertiser_name)
-            resolved_name = advertiser.name if advertiser else advertiser_name
+            if advertiser is None:
+                suggestions = repo.suggest(advertiser_name)
+                return json.dumps({
+                    "found": False,
+                    "advertiser_name": advertiser_name,
+                    "message": (
+                        f"No advertiser found for '{advertiser_name}'. Did you mean: "
+                        + ", ".join(f"'{s}'" for s in suggestions) + "?"
+                    ) if suggestions else f"No advertiser found for '{advertiser_name}'.",
+                    "did_you_mean": suggestions,
+                }, indent=2)
+            resolved_name = advertiser.name
 
             q = (
                 select(
@@ -3043,7 +3135,18 @@ def create_mcp_server() -> FastMCP:
         with _session_factory()() as session:
             repo = AdvertiserRepository(session)
             advertiser = repo.resolve(advertiser_name)
-            resolved_name = advertiser.name if advertiser else advertiser_name
+            if advertiser is None:
+                suggestions = repo.suggest(advertiser_name)
+                return json.dumps({
+                    "found": False,
+                    "advertiser_name": advertiser_name,
+                    "message": (
+                        f"No advertiser found for '{advertiser_name}'. Did you mean: "
+                        + ", ".join(f"'{s}'" for s in suggestions) + "?"
+                    ) if suggestions else f"No advertiser found for '{advertiser_name}'.",
+                    "did_you_mean": suggestions,
+                }, indent=2)
+            resolved_name = advertiser.name
 
             q = (
                 select(
@@ -3060,41 +3163,52 @@ def create_mcp_server() -> FastMCP:
             if sentiment:
                 q = q.where(AppFollowReviewRecord.sentiment == sentiment.lower())
 
-            result_rows = session.execute(q).all()
+            # Count total reviews for context
+            total_q = select(func.count()).select_from(q.subquery())
+            total_reviews = session.scalar(total_q) or 0
 
-        tag_counts: dict[str, int] = {}
-        tag_ratings: dict[str, list[float]] = {}
-        tag_sentiments: dict[str, Counter] = {}
+            # Aggregate tags in SQL via jsonb_array_elements_text to avoid Python-side explosion
+            tag_col = func.jsonb_array_elements_text(AppFollowReviewRecord.tags).column_valued("tag")
+            tag_agg_q = (
+                select(
+                    tag_col,
+                    func.count().label("cnt"),
+                    func.avg(AppFollowReviewRecord.star_rating).label("avg_rating"),
+                    func.sum(case((AppFollowReviewRecord.sentiment == "positive", 1), else_=0)).label("positive"),
+                    func.sum(case((AppFollowReviewRecord.sentiment == "negative", 1), else_=0)).label("negative"),
+                    func.sum(case((AppFollowReviewRecord.sentiment == "neutral", 1), else_=0)).label("neutral"),
+                )
+                .where(AppFollowReviewRecord.advertiser_name == resolved_name)
+                .where(AppFollowReviewRecord.review_date >= cutoff)
+                .where(AppFollowReviewRecord.tags.isnot(None))
+                .group_by(tag_col)
+                .order_by(desc("cnt"))
+                .limit(top_n)
+            )
+            if country:
+                tag_agg_q = tag_agg_q.where(AppFollowReviewRecord.country == country.upper())
+            if sentiment:
+                tag_agg_q = tag_agg_q.where(AppFollowReviewRecord.sentiment == sentiment.lower())
 
-        for row in result_rows:
-            for tag in (row.tags or []):
-                if not tag:
-                    continue
-                tag_counts[tag] = tag_counts.get(tag, 0) + 1
-                if row.star_rating is not None:
-                    tag_ratings.setdefault(tag, []).append(float(row.star_rating))
-                s = (row.sentiment or "unknown").lower()
-                tag_sentiments.setdefault(tag, Counter())[s] += 1
-
-        top_keywords = sorted(tag_counts.items(), key=lambda x: x[1], reverse=True)[:top_n]
-        keywords = [
-            {
-                "keyword":         kw,
-                "count":           count,
-                "avg_rating":      (
-                    round(sum(tag_ratings[kw]) / len(tag_ratings[kw]), 2)
-                    if kw in tag_ratings and tag_ratings[kw] else None
-                ),
-                "sentiment_split": dict(tag_sentiments.get(kw, Counter())),
-            }
-            for kw, count in top_keywords
-        ]
+            keywords = [
+                {
+                    "keyword": row.tag,
+                    "count": row.cnt,
+                    "avg_rating": round(float(row.avg_rating), 2) if row.avg_rating else None,
+                    "sentiment_split": {
+                        "positive": row.positive or 0,
+                        "negative": row.negative or 0,
+                        "neutral": row.neutral or 0,
+                    },
+                }
+                for row in session.execute(tag_agg_q).all()
+            ]
 
         return json.dumps({
             "found": bool(keywords),
             "resolved_name": resolved_name,
             "filters": {"country": country, "sentiment": sentiment, "days": days},
-            "total_reviews_with_tags": len(result_rows),
+            "total_reviews_with_tags": total_reviews,
             "top_keywords": keywords,
         }, indent=2)
 
@@ -3102,7 +3216,7 @@ def create_mcp_server() -> FastMCP:
         name="compare_appfollow_reviews",
         description=(
             "Compare AppFollow review sentiment and ratings across multiple advertisers. "
-            "Pass advertiser_names as a comma-separated list (e.g. 'Chime, Current, Dave'). "
+            "Pass advertiser_names as a comma-separated string (e.g. 'Chime,Dave,Current'). "
             "Returns per-brand: total reviews, avg rating, sentiment distribution, top keywords. "
             "gap_analysis identifies which competitor has the highest rating and best sentiment. "
             "Use this to answer: 'What are competitors praised for that we are criticized for?'"
