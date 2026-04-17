@@ -861,10 +861,10 @@ def _build_summary(advertiser_name: str, country: str | None = None) -> dict:
             for row in session.execute(review_sentiment_q).all()
         }
 
-        # Top review tags — unnest in SELECT, group by ordinal to avoid full table scan in Python
+        # Top review tags — jsonb_array_elements_text to expand JSON array in SQL
         top_tags_q = (
             select(
-                func.unnest(SensorTowerReviewTextRecord.tags).label("tag"),
+                func.jsonb_array_elements_text(SensorTowerReviewTextRecord.tags).label("tag"),
                 func.count().label("cnt"),
             )
             .where(SensorTowerReviewTextRecord.advertiser_name == canonical_name)
