@@ -8,7 +8,7 @@ from collections import Counter
 
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
-from sqlalchemy import case, desc, func, or_, select, text
+from sqlalchemy import cast, case, desc, func, Integer, or_, select, text
 
 from adintel.core.competitor_groups import build_competitor_run_plan, load_competitor_groups
 from adintel.core.settings import ROOT_DIR, get_settings
@@ -962,9 +962,9 @@ def _build_summary(advertiser_name: str, country: str | None = None) -> dict:
         }
 
         # Monthly creative launch cadence (last 6 months)
-        # Extract year/month as integers, group by year+month integer to avoid function duplication
-        year_month = (func.extract("year", SensorTowerCreativeRecord.first_seen).cast(text("integer")) * 100
-                     + func.extract("month", SensorTowerCreativeRecord.first_seen).cast(text("integer"))).label("ym")
+        # Extract year/month as integers, group by year*100+month integer
+        year_month = (cast(func.extract("year", SensorTowerCreativeRecord.first_seen), Integer) * 100
+                     + cast(func.extract("month", SensorTowerCreativeRecord.first_seen), Integer)).label("ym")
         creative_cadence_q = (
             select(year_month, func.count().label("cnt"))
             .where(SensorTowerCreativeRecord.advertiser_name == canonical_name)
