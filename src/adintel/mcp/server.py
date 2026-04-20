@@ -3186,41 +3186,47 @@ def create_mcp_server() -> FastMCP:
             total_q = select(func.count()).select_from(q.subquery())
             total_reviews = session.scalar(total_q) or 0
 
-            # Aggregate tags in SQL via jsonb_array_elements_text to avoid Python-side explosion
-            tag_col = func.jsonb_array_elements_text(AppFollowReviewRecord.tags).column_valued("tag")
-            tag_agg_q = (
-                select(
-                    tag_col,
-                    func.count().label("cnt"),
-                    func.avg(AppFollowReviewRecord.star_rating).label("avg_rating"),
-                    func.sum(case((AppFollowReviewRecord.sentiment == "positive", 1), else_=0)).label("positive"),
-                    func.sum(case((AppFollowReviewRecord.sentiment == "negative", 1), else_=0)).label("negative"),
-                    func.sum(case((AppFollowReviewRecord.sentiment == "neutral", 1), else_=0)).label("neutral"),
-                )
+            # Aggregate tags — use Python aggregation to handle both PostgreSQL and SQLite
+            # and to handle cases where tags might not be pure arrays
+            tag_q = (
+                select(AppFollowReviewRecord.tags, AppFollowReviewRecord.star_rating, AppFollowReviewRecord.sentiment)
                 .where(AppFollowReviewRecord.advertiser_name == resolved_name)
                 .where(AppFollowReviewRecord.review_date >= cutoff)
                 .where(AppFollowReviewRecord.tags.isnot(None))
-                .group_by(tag_col)
-                .order_by(desc("cnt"))
-                .limit(top_n)
             )
             if country:
-                tag_agg_q = tag_agg_q.where(AppFollowReviewRecord.country == country.upper())
+                tag_q = tag_q.where(AppFollowReviewRecord.country == country.upper())
             if sentiment:
-                tag_agg_q = tag_agg_q.where(AppFollowReviewRecord.sentiment == sentiment.lower())
+                tag_q = tag_q.where(AppFollowReviewRecord.sentiment == sentiment.lower())
 
+            tag_rows = session.execute(tag_q).all()
+            tag_stats: dict[str, dict] = {}
+            import json as json_lib
+            for row in tag_rows:
+                try:
+                    tags = json_lib.loads(row.tags) if isinstance(row.tags, str) else (row.tags or [])
+                except:
+                    tags = []
+                if isinstance(tags, list):
+                    for tag in tags:
+                        if tag not in tag_stats:
+                            tag_stats[tag] = {"count": 0, "ratings": [], "sentiments": {"positive": 0, "negative": 0, "neutral": 0}}
+                        tag_stats[tag]["count"] += 1
+                        if row.star_rating is not None:
+                            tag_stats[tag]["ratings"].append(row.star_rating)
+                        if row.sentiment:
+                            tag_stats[tag]["sentiments"][row.sentiment] += 1
+
+            # Sort by count and limit
+            sorted_tags = sorted(tag_stats.items(), key=lambda x: x[1]["count"], reverse=True)[:top_n]
             keywords = [
                 {
-                    "keyword": row.tag,
-                    "count": row.cnt,
-                    "avg_rating": round(float(row.avg_rating), 2) if row.avg_rating else None,
-                    "sentiment_split": {
-                        "positive": row.positive or 0,
-                        "negative": row.negative or 0,
-                        "neutral": row.neutral or 0,
-                    },
+                    "keyword": tag,
+                    "count": stats["count"],
+                    "avg_rating": round(sum(stats["ratings"]) / len(stats["ratings"]), 2) if stats["ratings"] else None,
+                    "sentiment_split": stats["sentiments"],
                 }
-                for row in session.execute(tag_agg_q).all()
+                for tag, stats in sorted_tags
             ]
 
         return json.dumps({
