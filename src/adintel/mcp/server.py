@@ -2568,19 +2568,29 @@ def create_mcp_server() -> FastMCP:
                 for row in session.execute(cat_q).all()
             ]
 
-            # Competitors appearing in citations — aggregate in SQL
-            cit_comp_col = func.jsonb_array_elements_text(OtterlyCitationRecord.competitors).column_valued("comp")
-            cit_comp_q = (
-                select(cit_comp_col, func.count().label("cnt"))
+            # Competitors appearing in citations — aggregate in Python
+            cit_q = (
+                select(OtterlyCitationRecord.competitors)
                 .where(OtterlyCitationRecord.target_brand_or_domain_name == advertiser_name)
                 .where(OtterlyCitationRecord.competitors.isnot(None))
-                .group_by(cit_comp_col)
-                .order_by(desc("cnt"))
-                .limit(10)
             )
             if country:
-                cit_comp_q = cit_comp_q.where(OtterlyCitationRecord.country_code == country.lower())
-            all_competitors: dict[str, int] = {row.comp: row.cnt for row in session.execute(cit_comp_q).all()}
+                cit_q = cit_q.where(OtterlyCitationRecord.country_code == country.lower())
+
+            rows = session.execute(cit_q).scalars().all()
+            comp_counts: dict[str, int] = {}
+            import json
+            for row in rows:
+                try:
+                    competitors = json.loads(row) if isinstance(row, str) else (row or [])
+                except:
+                    competitors = []
+                if isinstance(competitors, list):
+                    for comp in competitors:
+                        comp_counts[comp] = comp_counts.get(comp, 0) + 1
+
+            # Keep top 10
+            all_competitors = dict(sorted(comp_counts.items(), key=lambda x: x[1], reverse=True)[:10])
 
             # ── Prompt insights ──────────────────────────────────────
             prompt_q = (
@@ -2723,19 +2733,28 @@ def create_mcp_server() -> FastMCP:
                 engines = _geo_engine_breakdown(session, name, country)
                 sentiment = _geo_sentiment_distribution(session, name, country)
 
-                # Aggregate competitors in SQL via jsonb_array_elements_text
-                comp_col = func.jsonb_array_elements_text(OtterlyPromptRecord.competitors).column_valued("comp")
-                comp_agg_q = (
-                    select(comp_col, func.count().label("cnt"))
+                # Aggregate competitors in Python
+                comp_q = (
+                    select(OtterlyPromptRecord.competitors)
                     .where(OtterlyPromptRecord.target_brand_or_domain_name == name)
                     .where(OtterlyPromptRecord.competitors.isnot(None))
-                    .group_by(comp_col)
-                    .order_by(desc("cnt"))
-                    .limit(10)
                 )
                 if country:
-                    comp_agg_q = comp_agg_q.where(OtterlyPromptRecord.country_code == country.lower())
-                top_competitors = {row.comp: row.cnt for row in session.execute(comp_agg_q).all()}
+                    comp_q = comp_q.where(OtterlyPromptRecord.country_code == country.lower())
+
+                comp_rows = session.execute(comp_q).scalars().all()
+                comp_counts: dict[str, int] = {}
+                import json
+                for row in comp_rows:
+                    try:
+                        competitors = json.loads(row) if isinstance(row, str) else (row or [])
+                    except:
+                        competitors = []
+                    if isinstance(competitors, list):
+                        for comp in competitors:
+                            comp_counts[comp] = comp_counts.get(comp, 0) + 1
+
+                top_competitors = dict(sorted(comp_counts.items(), key=lambda x: x[1], reverse=True)[:10])
 
                 advertiser_data[name] = {
                     "found": True,

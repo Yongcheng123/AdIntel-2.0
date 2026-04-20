@@ -80,7 +80,7 @@ def test_get_metric_timeseries_returns_latest_window(monkeypatch) -> None:
     result = asyncio.run(
         server.call_tool(
             "get_metric_timeseries",
-            {"advertiser_name": "Chime", "metric": "downloads", "country": "US", "limit": 2},
+            {"advertiser_name": "Chime", "metric": "downloads", "country": "US", "days": 2},
         )
     )
     payload = decode_tool_result(result)
