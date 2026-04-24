@@ -4,12 +4,14 @@ from datetime import UTC, datetime
 
 from sqlalchemy import or_, select
 from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from adintel.core.models import AdvertiserProfile
 from adintel.db.models import (
     AppFollowReviewRecord,
     AdvertiserRecord,
+    JobRecord,
     OtterlyCitationRecord,
     OtterlyPromptRecord,
     RequestedAdvertiserRecord,
@@ -44,7 +46,9 @@ def _to_profile(record: AdvertiserRecord) -> AdvertiserProfile:
                     "unified_app_id": record.sensortower_unified_app_id,
                     "publisher_id": record.sensortower_publisher_id,
                     "ios_app_id": record.sensortower_ios_app_id,
+                    "ios_app_ids_by_country": record.sensortower_ios_app_ids_by_country or {},
                     "android_package": record.sensortower_android_package,
+                    "android_packages_by_country": record.sensortower_android_packages_by_country or {},
                 },
             },
         }
@@ -155,7 +159,13 @@ class AdvertiserRepository:
         record.sensortower_unified_app_id = advertiser.platforms.sensortower.unified_app_id
         record.sensortower_publisher_id = advertiser.platforms.sensortower.publisher_id
         record.sensortower_ios_app_id = advertiser.platforms.sensortower.ios_app_id
+        record.sensortower_ios_app_ids_by_country = (
+            advertiser.platforms.sensortower.ios_app_ids_by_country or None
+        )
         record.sensortower_android_package = advertiser.platforms.sensortower.android_package
+        record.sensortower_android_packages_by_country = (
+            advertiser.platforms.sensortower.android_packages_by_country or None
+        )
 
         self.session.commit()
         self.session.refresh(record)
@@ -473,9 +483,138 @@ class RequestedAdvertiserRepository:
         if row is None:
             row = RequestedAdvertiserRecord(name=name)
             self.session.add(row)
-        row.requested_by = requested_by or row.requested_by
-        row.context = context or row.context
+        # Only overwrite when the caller explicitly provided a value; preserves
+        # prior metadata if a later request omits it.
+        if requested_by is not None:
+            row.requested_by = requested_by
+        if context is not None:
+            row.context = context
         self.session.commit()
+
+
+class JobRepository:
+    """Lightweight Postgres-backed job queue.
+
+    Uses `SELECT ... FOR UPDATE SKIP LOCKED` to let multiple workers claim jobs
+    concurrently without collisions. Falls back to a non-locked query on SQLite
+    so tests can run against an in-memory database.
+    """
+
+    TERMINAL_STATUSES = ("success", "partial", "failed", "cancelled")
+    ACTIVE_STATUSES = ("queued", "running")
+
+    def __init__(self, session: Session) -> None:
+        self.session = session
+
+    def enqueue(
+        self,
+        *,
+        advertiser_name: str,
+        platform: str = "sensortower",
+        countries: list[str] | None = None,
+        metrics: list[str] | None = None,
+        reason: str | None = None,
+        requested_by: str | None = None,
+        priority: int = 100,
+    ) -> JobRecord:
+        existing = self.active_for(advertiser_name, platform)
+        if existing is not None:
+            return existing
+
+        job = JobRecord(
+            advertiser_name=advertiser_name,
+            platform=platform,
+            countries_csv=",".join(countries) if countries else None,
+            metrics_csv=",".join(metrics) if metrics else None,
+            reason=reason,
+            requested_by=requested_by,
+            priority=priority,
+            status="queued",
+        )
+        self.session.add(job)
+        try:
+            self.session.commit()
+            self.session.refresh(job)
+        except IntegrityError:
+            self.session.rollback()
+            existing = self.active_for(advertiser_name, platform)
+            if existing is None:
+                raise
+            return existing
+        return job
+
+    def claim_next(
+        self, *, worker_id: str, platforms: list[str] | None = None
+    ) -> JobRecord | None:
+        dialect = self.session.bind.dialect.name if self.session.bind else "sqlite"
+        query = (
+            select(JobRecord)
+            .where(JobRecord.status == "queued")
+            .order_by(JobRecord.priority.asc(), JobRecord.created_at.asc())
+            .limit(1)
+        )
+        if platforms:
+            query = query.where(JobRecord.platform.in_(platforms))
+        if dialect == "postgresql":
+            query = query.with_for_update(skip_locked=True)
+
+        job = self.session.scalar(query)
+        if job is None:
+            return None
+
+        job.status = "running"
+        job.worker_id = worker_id
+        job.started_at = datetime.now(UTC)
+        self.session.commit()
+        self.session.refresh(job)
+        return job
+
+    def attach_run(self, job_id: int, scrape_run_id: int) -> None:
+        job = self.session.get(JobRecord, job_id)
+        if job is None:
+            return
+        job.scrape_run_id = scrape_run_id
+        self.session.commit()
+
+    def finish(self, job_id: int, status: str, *, error: str | None = None) -> None:
+        job = self.session.get(JobRecord, job_id)
+        if job is None:
+            return
+        job.status = status
+        job.error = error
+        job.finished_at = datetime.now(UTC)
+        self.session.commit()
+
+    def get(self, job_id: int) -> JobRecord | None:
+        return self.session.get(JobRecord, job_id)
+
+    def list_recent(
+        self,
+        *,
+        advertiser_name: str | None = None,
+        status: str | None = None,
+        limit: int = 20,
+    ) -> list[JobRecord]:
+        query = select(JobRecord)
+        if advertiser_name:
+            query = query.where(JobRecord.advertiser_name == advertiser_name)
+        if status:
+            query = query.where(JobRecord.status == status)
+        return list(
+            self.session.scalars(query.order_by(JobRecord.created_at.desc()).limit(limit)).all()
+        )
+
+    def active_for(self, advertiser_name: str, platform: str = "sensortower") -> JobRecord | None:
+        return self.session.scalar(
+            select(JobRecord)
+            .where(
+                JobRecord.advertiser_name == advertiser_name,
+                JobRecord.platform == platform,
+                JobRecord.status.in_(list(self.ACTIVE_STATUSES)),
+            )
+            .order_by(JobRecord.created_at.desc())
+        )
+
 
 
 def _bulk_upsert(
@@ -511,13 +650,21 @@ def _bulk_upsert(
     num_cols = len(rows[0])
     chunk_size = max(1, 60_000 // num_cols)
     total = 0
-    for i in range(0, len(rows), chunk_size):
-        chunk = rows[i : i + chunk_size]
-        stmt = insert(model).values(chunk)
-        update_map = {column: getattr(stmt.excluded, column) for column in update_targets}
-        session.execute(stmt.on_conflict_do_update(index_elements=conflict_columns, set_=update_map))
+    try:
+        for i in range(0, len(rows), chunk_size):
+            chunk = rows[i : i + chunk_size]
+            stmt = insert(model).values(chunk)
+            update_map = {column: getattr(stmt.excluded, column) for column in update_targets}
+            session.execute(
+                stmt.on_conflict_do_update(index_elements=conflict_columns, set_=update_map)
+            )
+            total += len(chunk)
         session.commit()
-        total += len(chunk)
+    except Exception:
+        # Rolls back all chunks so a mid-batch failure does not leave a
+        # partially-written run.
+        session.rollback()
+        raise
     return total
 
 

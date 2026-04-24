@@ -23,7 +23,7 @@ from playwright.async_api import Page
 
 from adintel.collectors.base import PlatformCollector
 from adintel.core.models import CollectorRunRequest, CollectorRunResult, PlatformName
-from adintel.db.repositories import AppFollowRepository, ScrapeRunRepository
+from adintel.db.repositories import AppFollowRepository, ScrapeRunMetricRepository, ScrapeRunRepository
 from adintel.platforms.appfollow_parsers import (
     extract_next_page_cursor,
     parse_review_rows,
@@ -186,9 +186,11 @@ class AppFollowCollector(PlatformCollector):
         metric_results: dict[str, str] = {}
         date_end = datetime.now(UTC).date()
         date_start = date_end - timedelta(days=LOOKBACK_DAYS)
+        metric_runs = ScrapeRunMetricRepository(self.session)
 
         for country in countries:
             key = f"reviews/{country}"
+            metric_run = metric_runs.start(run.id, key)
             try:
                 written = await self._collect_country_reviews(
                     page=page,
@@ -204,6 +206,12 @@ class AppFollowCollector(PlatformCollector):
                 )
                 total_records += written
                 metric_results[key] = "success" if written else "empty"
+                metric_runs.finish(
+                    metric_run,
+                    status="success" if written else "empty",
+                    records_written=written,
+                    message=None if written else "No review data returned for this country.",
+                )
             except Exception as exc:
                 logger.error(
                     "AppFollow review collection failed for %s/%s: %s",
@@ -214,6 +222,7 @@ class AppFollowCollector(PlatformCollector):
                 )
                 metric_results[key] = "error"
                 self.session.rollback()
+                metric_runs.finish(metric_run, status="error", records_written=0, message=str(exc))
 
         failed = [k for k, v in metric_results.items() if v == "error"]
         if failed and total_records:
@@ -247,6 +256,10 @@ class AppFollowCollector(PlatformCollector):
         metric_results: dict[str, str] = {}
         date_end = datetime.now(UTC).date()
         date_start = date_end - timedelta(days=LOOKBACK_DAYS)
+        scrape_run_id = request.extra.get("scrape_run_id")
+        metric_runs = (
+            ScrapeRunMetricRepository(self.session) if isinstance(scrape_run_id, int) else None
+        )
 
         async with self.browser.session(self.state_key, headless=request.headless, use_cdp=use_cdp) as context:
             page = context.pages[0] if context.pages else await context.new_page()
@@ -263,6 +276,11 @@ class AppFollowCollector(PlatformCollector):
             repository = AppFollowRepository(self.session)
             for country in request.countries:
                 key = f"reviews/{country}"
+                metric_run = (
+                    metric_runs.start(scrape_run_id, key)
+                    if metric_runs is not None and scrape_run_id is not None
+                    else None
+                )
                 try:
                     written = await self._collect_country_reviews(
                         page=page,
@@ -278,6 +296,13 @@ class AppFollowCollector(PlatformCollector):
                     )
                     total_records += written
                     metric_results[key] = "success" if written else "empty"
+                    if metric_run is not None:
+                        metric_runs.finish(
+                            metric_run,
+                            status="success" if written else "empty",
+                            records_written=written,
+                            message=None if written else "No review data returned for this country.",
+                        )
                 except Exception as exc:
                     logger.error(
                         "AppFollow review collection failed for %s/%s: %s",
@@ -288,6 +313,8 @@ class AppFollowCollector(PlatformCollector):
                     )
                     metric_results[key] = "error"
                     self.session.rollback()
+                    if metric_run is not None:
+                        metric_runs.finish(metric_run, status="error", records_written=0, message=str(exc))
 
         failed = [k for k, v in metric_results.items() if v == "error"]
         if failed and total_records:
@@ -581,4 +608,3 @@ class AppFollowCollector(PlatformCollector):
         except Exception as exc:
             logger.debug("AppFollow session check inconclusive (%s), proceeding", exc)
             return True
-

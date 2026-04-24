@@ -10,10 +10,10 @@ from sqlalchemy.orm import sessionmaker
 from adintel.collectors.service import CollectorService
 from adintel.core.settings import AppSettings
 from adintel.core.models import AdvertiserProfile, PlatformName
-from adintel.db.models import AdvertiserRecord, Base, ScrapeRunRecord, SensorTowerRetentionRecord
+from adintel.db.models import AdvertiserRecord, Base, ScrapeRunMetricRecord, ScrapeRunRecord, SensorTowerRetentionRecord
 from adintel.db.models import OtterlyPromptRecord
 from adintel.db.session import ensure_schema
-from adintel.db.repositories import CollectionHealthRepository, ScrapeRunRepository, _bulk_upsert
+from adintel.db.repositories import CollectionHealthRepository, ScrapeRunMetricRepository, ScrapeRunRepository, _bulk_upsert
 
 
 class FakeSession:
@@ -216,3 +216,67 @@ def test_ensure_schema_applies_sql_when_hash_changes(tmp_path: Path) -> None:
 
     assert exists == "demo_table"
     assert applied_hash is not None
+
+
+def test_advertiser_repository_round_trips_country_overrides() -> None:
+    from adintel.db.repositories import AdvertiserRepository
+
+    session = build_sqlite_session()
+    repo = AdvertiserRepository(session)
+
+    stored = repo.upsert(
+        AdvertiserProfile.model_validate(
+            {
+                "name": "Chime",
+                "countries": ["US", "TR"],
+                "platforms": {
+                    "sensortower": {
+                        "unified_app_id": "uai-1",
+                        "ios_app_id": "ios-global",
+                        "ios_app_ids_by_country": {"TR": "ios-tr"},
+                        "android_package": "pkg.global",
+                        "android_packages_by_country": {"BR": "pkg.br"},
+                    }
+                },
+            }
+        )
+    )
+
+    assert stored.platforms.sensortower.resolve_ios_app_id("TR") == "ios-tr"
+    assert stored.platforms.sensortower.resolve_android_package("BR") == "pkg.br"
+
+    loaded = repo.get("Chime")
+    assert loaded is not None
+    assert loaded.platforms.sensortower.ios_app_ids_by_country == {"TR": "ios-tr"}
+    assert loaded.platforms.sensortower.android_packages_by_country == {"BR": "pkg.br"}
+
+
+def test_collect_one_records_metric_progress() -> None:
+    class SuccessfulCollector:
+        async def collect(self, request, *, use_cdp: bool = False):
+            metric_repo = ScrapeRunMetricRepository(service.session)
+            metric = metric_repo.start(request.extra["scrape_run_id"], "downloads/US")
+            metric_repo.finish(metric, status="success", records_written=3)
+            return SimpleNamespace(
+                status="success",
+                message="ok",
+                records_written=3,
+                metadata={"metric_results": {"downloads/US": "success"}},
+            )
+
+    service = object.__new__(CollectorService)
+    service.session = build_sqlite_session()
+    service.collectors = {PlatformName.SENSORTOWER: SuccessfulCollector()}
+    service.runs = ScrapeRunRepository(service.session)
+    service.settings = AppSettings()
+
+    advertiser = AdvertiserProfile(name="Chime", countries=["US"])
+
+    result = asyncio.run(service.collect_one(advertiser, PlatformName.SENSORTOWER))
+
+    assert result.records_written == 3
+    metrics = service.session.query(ScrapeRunMetricRecord).all()
+    assert len(metrics) == 1
+    assert metrics[0].metric_name == "downloads/US"
+    assert metrics[0].status == "success"
+    assert metrics[0].records_written == 3

@@ -33,8 +33,14 @@ from adintel.db.models import (
     SocialPetaCreativeRecord,
     SocialPetaCreativeTagRecord,
 )
-from adintel.db.repositories import AdvertiserRepository, CollectionHealthRepository, RequestedAdvertiserRepository
-from adintel.db.repositories import ScrapeRunRepository
+from adintel.db.models import JobRecord, ScrapeRunMetricRecord
+from adintel.db.repositories import (
+    AdvertiserRepository,
+    CollectionHealthRepository,
+    JobRepository,
+    RequestedAdvertiserRepository,
+    ScrapeRunRepository,
+)
 from adintel.db.session import build_session_factory
 
 
@@ -58,6 +64,69 @@ def _serialize_requested(row: RequestedAdvertiserRecord) -> dict:
         "context": row.context,
         "status": row.status,
         "created_at": row.created_at.isoformat() if row.created_at else None,
+    }
+
+
+def _serialize_job(job: JobRecord) -> dict:
+    return {
+        "id": job.id,
+        "advertiser_name": job.advertiser_name,
+        "platform": job.platform,
+        "status": job.status,
+        "reason": job.reason,
+        "priority": job.priority,
+        "countries": job.countries_csv.split(",") if job.countries_csv else None,
+        "metrics": job.metrics_csv.split(",") if job.metrics_csv else None,
+        "requested_by": job.requested_by,
+        "worker_id": job.worker_id,
+        "scrape_run_id": job.scrape_run_id,
+        "error": job.error,
+        "created_at": job.created_at.isoformat() if job.created_at else None,
+        "started_at": job.started_at.isoformat() if job.started_at else None,
+        "finished_at": job.finished_at.isoformat() if job.finished_at else None,
+    }
+
+
+def _freshness(
+    session, advertiser_name: str, platform: str = "sensortower", stale_hours: float | None = None
+) -> dict:
+    """Return freshness info for an (advertiser, platform) pair.
+
+    Uses the same source of truth as list_advertisers: the latest finished
+    scrape_runs row with status in (success, partial).
+    """
+    from datetime import UTC, datetime as _dt
+
+    if stale_hours is None:
+        stale_hours = float(get_settings().data_stale_hours)
+
+    last_scraped = session.scalar(
+        select(func.max(ScrapeRunRecord.finished_at))
+        .where(ScrapeRunRecord.advertiser_name == advertiser_name)
+        .where(ScrapeRunRecord.platform == platform)
+        .where(ScrapeRunRecord.status.in_(["success", "partial"]))
+    )
+
+    if last_scraped is None:
+        return {
+            "platform": platform,
+            "last_scraped": None,
+            "age_hours": None,
+            "is_stale": True,
+            "has_data": False,
+            "stale_threshold_hours": stale_hours,
+        }
+
+    now = _dt.now(UTC)
+    ts = last_scraped if last_scraped.tzinfo else last_scraped.replace(tzinfo=UTC)
+    age_hours = round((now - ts).total_seconds() / 3600, 2)
+    return {
+        "platform": platform,
+        "last_scraped": last_scraped.isoformat(),
+        "age_hours": age_hours,
+        "is_stale": age_hours >= stale_hours,
+        "has_data": True,
+        "stale_threshold_hours": stale_hours,
     }
 
 
@@ -1539,6 +1608,116 @@ def create_mcp_server() -> FastMCP:
         )
 
     @server.tool(
+        name="request_advertiser_refresh",
+        description=(
+            "Trigger an on-demand scrape for an advertiser. If DB data is fresh "
+            "(within data_stale_hours) and force=False, returns freshness info "
+            "without enqueuing. Otherwise creates a queued job for the worker. "
+            "Duplicate queued/running jobs for the same (advertiser, platform) "
+            "are collapsed — the existing job is returned."
+        ),
+    )
+    def request_advertiser_refresh(
+        advertiser_name: str,
+        platform: str = "sensortower",
+        countries: str | None = None,
+        metrics: str | None = None,
+        force: bool = False,
+        requested_by: str | None = None,
+    ) -> str:
+        with _session_factory()() as session:
+            freshness = _freshness(session, advertiser_name, platform)
+            active = JobRepository(session).active_for(advertiser_name, platform)
+
+            if not force and not freshness["is_stale"] and freshness["has_data"] and active is None:
+                return json.dumps(
+                    {
+                        "status": "fresh",
+                        "advertiser_name": advertiser_name,
+                        "freshness": freshness,
+                        "job": None,
+                    },
+                    indent=2,
+                )
+
+            reason = "manual" if force else ("missing" if not freshness["has_data"] else "stale")
+            countries_list = (
+                [c.strip().upper() for c in countries.split(",") if c.strip()] if countries else None
+            )
+            metrics_list = (
+                [m.strip().lower() for m in metrics.split(",") if m.strip()] if metrics else None
+            )
+            job = JobRepository(session).enqueue(
+                advertiser_name=advertiser_name,
+                platform=platform,
+                countries=countries_list,
+                metrics=metrics_list,
+                reason=reason,
+                requested_by=requested_by,
+            )
+            return json.dumps(
+                {
+                    "status": "queued" if job.status == "queued" else job.status,
+                    "advertiser_name": advertiser_name,
+                    "freshness": freshness,
+                    "job": _serialize_job(job),
+                },
+                indent=2,
+            )
+
+    @server.tool(
+        name="get_job_status",
+        description=(
+            "Return status for a single job, including linked scrape_run metrics "
+            "(partial progress)."
+        ),
+    )
+    def get_job_status(job_id: int) -> str:
+        with _session_factory()() as session:
+            job = JobRepository(session).get(job_id)
+            if job is None:
+                return json.dumps({"error": f"Job {job_id} not found"})
+
+            payload = {"job": _serialize_job(job)}
+            if job.scrape_run_id is not None:
+                run = session.get(ScrapeRunRecord, job.scrape_run_id)
+                if run is not None:
+                    payload["scrape_run"] = _serialize_scrape_run(run)
+                metric_rows = session.scalars(
+                    select(ScrapeRunMetricRecord)
+                    .where(ScrapeRunMetricRecord.scrape_run_id == job.scrape_run_id)
+                    .order_by(ScrapeRunMetricRecord.metric_name)
+                ).all()
+                payload["metrics"] = [
+                    {
+                        "metric_name": m.metric_name,
+                        "status": m.status,
+                        "records_written": m.records_written,
+                        "message": m.message,
+                    }
+                    for m in metric_rows
+                ]
+            return json.dumps(payload, indent=2)
+
+    @server.tool(
+        name="list_jobs",
+        description="List recent jobs, optionally filtered by advertiser_name or status.",
+    )
+    def list_jobs(
+        advertiser_name: str | None = None,
+        status: str | None = None,
+        limit: int = 20,
+    ) -> str:
+        with _session_factory()() as session:
+            jobs = JobRepository(session).list_recent(
+                advertiser_name=advertiser_name, status=status, limit=max(1, min(limit, 200))
+            )
+            return json.dumps(
+                {"jobs": [_serialize_job(j) for j in jobs]},
+                indent=2,
+            )
+
+    @server.tool(
         name="read_schema_text",
         description="Return the canonical SQL schema as text when the client needs raw schema content.",
     )
@@ -2583,7 +2762,7 @@ def create_mcp_server() -> FastMCP:
             for row in rows:
                 try:
                     competitors = json.loads(row) if isinstance(row, str) else (row or [])
-                except:
+                except (json.JSONDecodeError, TypeError):
                     competitors = []
                 if isinstance(competitors, list):
                     for comp in competitors:
@@ -2748,7 +2927,7 @@ def create_mcp_server() -> FastMCP:
                 for row in comp_rows:
                     try:
                         competitors = json.loads(row) if isinstance(row, str) else (row or [])
-                    except:
+                    except (json.JSONDecodeError, TypeError):
                         competitors = []
                     if isinstance(competitors, list):
                         for comp in competitors:
@@ -3205,7 +3384,7 @@ def create_mcp_server() -> FastMCP:
             for row in tag_rows:
                 try:
                     tags = json_lib.loads(row.tags) if isinstance(row.tags, str) else (row.tags or [])
-                except:
+                except (json_lib.JSONDecodeError, TypeError):
                     tags = []
                 if isinstance(tags, list):
                     for tag in tags:

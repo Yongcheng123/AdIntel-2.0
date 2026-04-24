@@ -21,7 +21,9 @@ class AdvertiserRecord(Base):
     sensortower_unified_app_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     sensortower_publisher_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     sensortower_ios_app_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    sensortower_ios_app_ids_by_country: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     sensortower_android_package: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    sensortower_android_packages_by_country: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=datetime.utcnow, onupdate=lambda: datetime.now(UTC)
@@ -51,6 +53,30 @@ class ScrapeRunMetricRecord(Base):
     records_written: Mapped[int] = mapped_column(Integer, default=0)
     message: Mapped[str | None] = mapped_column(Text, nullable=True)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class JobRecord(Base):
+    __tablename__ = "jobs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    advertiser_name: Mapped[str] = mapped_column(String(255), index=True)
+    platform: Mapped[str] = mapped_column(String(64), default="sensortower")
+    countries_csv: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    metrics_csv: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    priority: Mapped[int] = mapped_column(Integer, default=100)
+    status: Mapped[str] = mapped_column(String(32), default="queued")
+    requested_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    reason: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    scrape_run_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("scrape_runs.id"), nullable=True
+    )
+    worker_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 

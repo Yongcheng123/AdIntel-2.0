@@ -7,77 +7,104 @@ short_description: Public AdIntel MCP server with key-based access
 
 # AdIntel
 
-AdIntel is a local-first scraping and intelligence workspace.
+AdIntel is a Python-first scraping and intelligence workspace for mobile advertisers.
 
-It does three things:
+It does four things:
 
-1. runs SensorTower collection locally with your browser session
-2. stores normalized data in Neon Postgres
-3. exposes a read-only MCP server so clients like Claude, Codex, and Antigravity can query that data
+1. runs SensorTower, SocialPeta, AppFollow, and Otterly collection on a remote desktop with a logged-in browser session
+2. stores normalized data in Postgres (Neon)
+3. exposes an MCP server so clients like Claude can query that data
+4. supports on-demand advertiser refresh via a job queue — MCP enqueues a job when data is missing or stale, and the worker on the remote desktop picks it up and runs the existing scraper
 
 ## Architecture
 
 ```text
-Local machine
-  -> SensorTower login/session
-  -> Playwright collection
-  -> writes to Neon
+Remote desktop
+  -> logged-in Playwright browser (SensorTower, SocialPeta, AppFollow)
+  -> adintel worker run --use-cdp
+  -> polls jobs table, runs existing scraper
+  -> writes to Postgres
 
-Neon Postgres
+Postgres (Neon)
   -> shared source of truth
-  -> advertiser catalog
-  -> SensorTower metric tables
-  -> scrape run history
+  -> advertisers table + per-platform metric tables
+  -> scrape_runs / scrape_run_metrics (run health)
+  -> jobs table (on-demand refresh queue)
+  -> requested_advertisers (onboarding backlog)
 
-Vercel MCP
-  -> reads from Neon
-  -> exposes tools over MCP HTTP
-  -> does not scrape
+Hugging Face MCP (hosted)
+  -> reads from Postgres
+  -> exposes MCP tools over HTTP with API key auth
+  -> enqueues jobs when data is stale or missing
+  -> does not scrape directly
 ```
 
 The key separation is:
 
-- collection runs locally
+- collection runs on the remote desktop (browser session stays there)
 - the database is shared
-- the hosted MCP server is read-only
+- the hosted MCP server is read-only except for enqueuing jobs
 
 ## What This MCP Can Do
 
 The AdIntel MCP server can:
 
-- list advertisers stored in the database
-- summarize the latest SensorTower data for an advertiser
-- show collection health and alerts
-- show recent collection runs and saved metadata
-- return metric time series
-- compare advertisers side by side
+- list advertisers and their data freshness
+- return full advertiser summaries (downloads, DAU, retention, SOV, demographics, reviews, creatives, ASO keywords)
+- compare advertisers side by side with gap analysis
+- show metric time series
+- show SocialPeta display-ad creative analysis
+- show GEO (AI search visibility) data via Otterly
+- show AppFollow review sentiment trends and keyword analysis
+- show market-wide top app rankings
+- show collection status, health, and stale-data alerts
 - log advertiser requests for later onboarding
+- trigger on-demand advertiser refresh (creates a job if data is missing or stale)
+- return job status and partial scrape progress
+- run read-only SQL queries against the database
 - return the canonical schema text
 
 ## MCP Tools
 
-The current hosted MCP server exposes these tools:
+### Advertiser Data
 
-- `list_advertisers`
-  - list advertisers currently stored in AdIntel
-- `get_advertiser_summary`
-  - latest SensorTower summary for an advertiser
-- `request_advertiser`
-  - log a missing advertiser for later onboarding
-- `list_requested_advertisers`
-  - view requested advertisers not yet onboarded
-- `read_schema_text`
-  - return the canonical SQL schema text
-- `get_collection_health`
-  - view freshness, failures, and recent success state
-- `get_collection_alerts`
-  - surface stale data and repeated collection failures
-- `get_recent_collection_runs`
-  - inspect recent saved scrape runs and metadata
-- `get_metric_timeseries`
-  - return historical metric rows for a metric/advertiser/country
-- `compare_advertisers`
-  - compare latest values across advertisers
+- `list_advertisers` — list all tracked advertisers with data freshness metadata
+- `get_advertiser_summary` — full SensorTower dashboard for one advertiser
+- `get_socialpeta_summary` — SocialPeta display-ad creative analysis
+- `get_socialpeta_comparison` — multi-advertiser creative comparison
+- `get_full_comparison` — side-by-side downloads/DAU timeseries, SOV, gap analysis
+- `get_metric_timeseries` — historical rows for a specific metric/advertiser/country
+- `get_market_top_apps` — market-wide top app rankings by category
+
+### GEO (Generative Engine Optimization)
+
+- `get_geo_summary` — AI search visibility by engine, sentiment, cited domains
+- `compare_geo_visibility` — competitive GEO comparison
+- `get_geo_data_availability` — coverage report for GEO tables
+
+### AppFollow Reviews
+
+- `get_appfollow_reviews` — individual reviews filtered by sentiment/rating/country
+- `get_appfollow_sentiment_trend` — daily sentiment distribution
+- `get_appfollow_keyword_analysis` — top review keywords by sentiment
+- `compare_appfollow_reviews` — cross-advertiser review sentiment comparison
+
+### Collection Management
+
+- `get_collection_status` — data availability matrix and stale-data alerts
+- `request_advertiser` — log a missing advertiser for later onboarding
+- `list_requested_advertisers` — view the onboarding backlog
+
+### On-Demand Refresh (Job Queue)
+
+- `request_advertiser_refresh` — check freshness; if stale or missing, enqueue a job for the remote worker. Returns immediately with job ID. Duplicate jobs for the same advertiser/platform are collapsed.
+- `get_job_status` — status for a specific job, including linked `scrape_run_metrics` for partial progress
+- `list_jobs` — recent job history, filterable by advertiser and status
+
+### Database
+
+- `run_query` — read-only SQL (SELECT only) against the AdIntel database
+- `read_schema_text` — return the canonical SQL schema
 
 ## Data Structures
 
@@ -89,6 +116,7 @@ These tables are cross-platform and should stay generic:
 - `scrape_runs`
 - `scrape_run_metrics`
 - `requested_advertisers`
+- `jobs` — on-demand refresh queue; workers poll this and link back to `scrape_runs`
 
 ### SensorTower Tables
 
@@ -487,7 +515,7 @@ Run one advertiser only:
 RUN_ALL_FROM_CONFIG=false ADVERTISER_NAME=Chime bash scripts/run_socialpeta_to_server.sh
 ```
 
-#### AppFollow
+##### AppFollow
 
 Login (once per session):
 
@@ -511,6 +539,42 @@ Test one batch:
 
 ```bash
 TEST=true bash scripts/run_appfollow_to_server.sh
+```
+
+#### On-Demand Worker
+
+Start the worker on the remote desktop. It polls the `jobs` table and runs the existing scraper for each claimed job:
+
+```bash
+./.venv/bin/adintel worker run --use-cdp
+```
+
+Options:
+
+```bash
+# Set polling interval (seconds between polls when queue is empty)
+./.venv/bin/adintel worker run --use-cdp --poll-interval 15
+
+# Limit to specific platforms
+./.venv/bin/adintel worker run --use-cdp --platforms sensortower
+
+# Process a fixed number of jobs then exit (useful for cron)
+./.venv/bin/adintel worker run --use-cdp --max-jobs 5
+
+# Verbose logging
+./.venv/bin/adintel worker run --use-cdp --verbose
+```
+
+Multiple worker processes can run concurrently — the queue uses `SELECT ... FOR UPDATE SKIP LOCKED` so each job is claimed by exactly one worker.
+
+Once the worker is running, you can trigger collection from any MCP client:
+
+```
+request_advertiser_refresh("Chime", force=True)
+# → {status: "queued", job: {id: 42, status: "queued", ...}}
+
+get_job_status(42)
+# → {job: {...}, scrape_run: {...}, metrics: [{metric_name: "downloads", status: "success", records_written: 90}, ...]}
 ```
 
 ### Check Latest Run Status
@@ -612,6 +676,9 @@ This endpoint is a real MCP HTTP transport endpoint.
 
 A plain browser or `curl` may return a `406 Not Acceptable` response because the server expects a client that accepts `text/event-stream`. That is normal.
 
+For Coolify deployment of the MCP host only, see
+[docs/coolify-deploy.md](/Users/yongcheng/Desktop/projects/AdIntel-2.0/docs/coolify-deploy.md).
+
 ## Install The MCP
 
 ### Claude Desktop
@@ -689,33 +756,53 @@ Or use `mcp-remote` if needed:
 }
 ```
 
+## Environment Variables
+
+| Variable | Description | Default |
+|---|---|---|
+| `ADINTEL_DATABASE_URL` | SQLAlchemy Postgres URL | `postgresql+psycopg://postgres:postgres@localhost:5432/adintel` |
+| `ADINTEL_DATA_STALE_HOURS` | Hours before MCP considers data stale | `24` |
+| `ADINTEL_WORKER_POLL_INTERVAL_S` | Worker idle sleep seconds | `10` |
+| `ADINTEL_CDP_URL` | Chrome DevTools Protocol URL for remote browser | `http://127.0.0.1:9222` |
+| `ADINTEL_ALERT_WEBHOOK_URL` | Slack/webhook URL for collection alerts | — |
+| `ADINTEL_APPFOLLOW_WORKSPACE` | AppFollow workspace ID | — |
+| `MCP_API_KEY` / `ADINTEL_MCP_API_KEY` | API key for Hugging Face hosted MCP | — |
+
 ## Example Questions
 
 Ask the MCP things like:
 
 - `List all advertisers in the database.`
-- `Show the most recent collection runs.`
-- `Give me a summary for Chime.`
-- `Which advertisers have stale or missing data?`
-- `Show collection health for the last 7 days.`
-- `What SensorTower metrics do we have for Coinbase?`
-- `Compare recent scrape status for Chime and Binance.`
+- `Give me a full summary for Chime.`
+- `Compare Chime vs Dave vs Current on downloads and SOV.`
+- `Which advertisers have stale or missing SensorTower data?`
+- `Show GEO visibility for Chime across all AI engines.`
+- `What are the top review keywords for Chime in the last 30 days?`
+- `Trigger a refresh for Coinbase — data looks old.`
+- `What's the status of job 42?`
+- `Show me the top 20 Finance apps in the US this month.`
 
 ## Project Layout
 
 ```text
 src/adintel/         application package
-  cli/               CLI commands
-  collectors/        collection orchestration
-  platforms/         SensorTower logic and parsers
-  db/                SQLAlchemy models and repositories
-  mcp/               MCP tool layer
+  cli/               CLI commands (includes `worker run`)
+  collectors/        collection orchestration (CollectorService)
+  platforms/         SensorTower, SocialPeta, AppFollow, Otterly logic and parsers
+  db/                SQLAlchemy models and repositories (incl. JobRepository)
+  mcp/               MCP tool layer (22 tools)
   core/              settings and shared models
+  worker.py          on-demand job worker (polls jobs table, runs existing scraper)
 
 config/              advertiser YAML catalogs
-sql/schema.sql       canonical schema
-sql/migrations/      one-time SQL migrations
-scripts/             helper scripts for migration and collection
+  advertisers.yaml   main advertiser catalog
+  socialpeta_groups.yaml  competitor group definitions
+  appfollow_groups.yaml   AppFollow group definitions
+
+sql/schema.sql       canonical schema (idempotent, applied on startup)
+sql/migrations/      one-time structural migrations
+scripts/             helper scripts for collection and migration
+hf_space.py          Hugging Face MCP entry point (API key auth)
 api/index.py         Vercel MCP entry point
 tests/               pytest suite
 ```

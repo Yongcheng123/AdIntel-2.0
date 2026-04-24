@@ -53,6 +53,7 @@ class CollectorService:
             metrics=metrics,
             headless=headless,
             debug=debug,
+            extra={"scrape_run_id": run.id},
         )
         try:
             result = await self.collectors[platform].collect(request, use_cdp=use_cdp)

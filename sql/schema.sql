@@ -18,7 +18,9 @@ CREATE TABLE IF NOT EXISTS advertisers (
   sensortower_unified_app_id VARCHAR(255),
   sensortower_publisher_id VARCHAR(255),
   sensortower_ios_app_id VARCHAR(255),
+  sensortower_ios_app_ids_by_country JSONB,
   sensortower_android_package VARCHAR(255),
+  sensortower_android_packages_by_country JSONB,
   created_at TIMESTAMPTZ DEFAULT now(),
   updated_at TIMESTAMPTZ DEFAULT now()
 );
@@ -215,6 +217,9 @@ CREATE TABLE IF NOT EXISTS sensortower_aso_keywords (
 
 CREATE INDEX IF NOT EXISTS idx_sensortower_aso_keywords_advertiser_name ON sensortower_aso_keywords(advertiser_name);
 
+ALTER TABLE advertisers ADD COLUMN IF NOT EXISTS sensortower_ios_app_ids_by_country JSONB;
+ALTER TABLE advertisers ADD COLUMN IF NOT EXISTS sensortower_android_packages_by_country JSONB;
+
 CREATE TABLE IF NOT EXISTS otterlyai_prompts (
   id SERIAL PRIMARY KEY,
   target_brand_or_domain_name VARCHAR(255) NOT NULL,
@@ -385,6 +390,32 @@ CREATE INDEX IF NOT EXISTS idx_appfollow_reviews_advertiser ON appfollow_reviews
 CREATE INDEX IF NOT EXISTS idx_appfollow_reviews_date      ON appfollow_reviews(review_date);
 CREATE INDEX IF NOT EXISTS idx_appfollow_reviews_sentiment ON appfollow_reviews(sentiment);
 CREATE INDEX IF NOT EXISTS idx_appfollow_reviews_country   ON appfollow_reviews(country);
+
+-- On-demand job queue. Workers poll this table; MCP writes to it when data
+-- is missing or stale. Job state stays small — detailed run progress lives
+-- in scrape_runs / scrape_run_metrics, linked via scrape_run_id.
+CREATE TABLE IF NOT EXISTS jobs (
+  id SERIAL PRIMARY KEY,
+  advertiser_name VARCHAR(255) NOT NULL,
+  platform VARCHAR(64) NOT NULL DEFAULT 'sensortower',
+  countries_csv VARCHAR(255),
+  metrics_csv VARCHAR(255),
+  priority SMALLINT NOT NULL DEFAULT 100,
+  status VARCHAR(32) NOT NULL DEFAULT 'queued',
+  requested_by VARCHAR(255),
+  reason VARCHAR(64),
+  scrape_run_id INTEGER REFERENCES scrape_runs(id),
+  worker_id VARCHAR(128),
+  error TEXT,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  started_at TIMESTAMPTZ,
+  finished_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_jobs_status_priority ON jobs(status, priority, created_at);
+CREATE INDEX IF NOT EXISTS idx_jobs_advertiser ON jobs(advertiser_name);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_jobs_active_per_target
+  ON jobs(advertiser_name, platform) WHERE status IN ('queued','running');
 
 -- Additive migrations for existing databases
 --

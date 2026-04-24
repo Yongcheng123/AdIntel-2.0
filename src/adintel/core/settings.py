@@ -51,6 +51,11 @@ class AppSettings(BaseSettings):
     stale_critical_hours: int = 168
     max_consecutive_failures: int = 3
 
+    # On-demand refresh — how old data can be before MCP enqueues a job instead
+    # of returning what's in the DB.
+    data_stale_hours: float = 24.0
+    worker_poll_interval_s: float = 10.0
+
     @property
     def browser_state_dir(self) -> Path:
         return self.state_dir / "browser"

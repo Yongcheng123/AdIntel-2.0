@@ -34,10 +34,41 @@ app = typer.Typer(help="AdIntel operator CLI")
 advertisers_app = typer.Typer(help="Manage advertiser profiles")
 catalog_app = typer.Typer(help="Work with YAML catalogs")
 collect_app = typer.Typer(help="Run collection workflows")
+worker_app = typer.Typer(help="Run on-demand job worker")
 
 app.add_typer(advertisers_app, name="advertisers")
 app.add_typer(catalog_app, name="catalog")
 app.add_typer(collect_app, name="collect")
+app.add_typer(worker_app, name="worker")
+
+
+@worker_app.command("run")
+def worker_run(
+    poll_interval: float = typer.Option(10.0, help="Seconds to sleep when queue is empty."),
+    platforms: str = typer.Option(
+        "sensortower", help="Comma-separated platforms this worker will serve."
+    ),
+    use_cdp: bool = typer.Option(
+        True, help="Connect to an existing logged-in browser over CDP."
+    ),
+    headless: bool = typer.Option(False, help="Run browser headlessly (ignored with --use-cdp)."),
+    max_jobs: int | None = typer.Option(
+        None, help="Process at most N jobs then exit (useful for cron-style invocation)."
+    ),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable DEBUG logging."),
+) -> None:
+    """Poll the jobs table and run the scraper for each claimed job."""
+    from adintel.worker import run_worker
+
+    _setup_logging(verbose)
+    platform_list = [p.strip() for p in platforms.split(",") if p.strip()]
+    run_worker(
+        poll_interval=poll_interval,
+        platforms=platform_list or None,
+        use_cdp=use_cdp,
+        headless=headless,
+        max_jobs=max_jobs,
+    )
 
 
 def _session_factory():

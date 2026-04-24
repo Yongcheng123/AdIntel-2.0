@@ -91,6 +91,10 @@ class SensorTowerCollector(PlatformCollector):
 
         logger.info("Starting SensorTower collection for %s (countries=%s)", request.advertiser.name, request.countries)
         repository = SensorTowerRepository(self.session)
+        scrape_run_id = request.extra.get("scrape_run_id")
+        metric_runs = (
+            ScrapeRunMetricRepository(self.session) if isinstance(scrape_run_id, int) else None
+        )
         total_records = 0
         category_state = {"id": None, "name": None}
         metric_results: dict[str, str] = {}
@@ -148,14 +152,33 @@ class SensorTowerCollector(PlatformCollector):
                 logger.info("Collecting metrics for %s/%s", request.advertiser.name, country)
                 for metric_name, collector_fn in metrics:
                     key = f"{metric_name}/{country}"
+                    metric_run = (
+                        metric_runs.start(scrape_run_id, key)
+                        if metric_runs is not None and scrape_run_id is not None
+                        else None
+                    )
                     try:
                         written = await collector_fn(country)
                         total_records += written
                         metric_results[key] = "success" if written else "empty"
+                        if metric_run is not None:
+                            metric_runs.finish(
+                                metric_run,
+                                status="success" if written else "empty",
+                                records_written=written,
+                                message=None if written else "No data returned for this metric/country.",
+                            )
                     except Exception as exc:
                         logger.error("Metric %s failed for %s: %s", key, request.advertiser.name, exc, exc_info=True)
                         metric_results[key] = "error"
                         self.session.rollback()
+                        if metric_run is not None:
+                            metric_runs.finish(
+                                metric_run,
+                                status="error",
+                                records_written=0,
+                                message=str(exc),
+                            )
 
         failed_metrics = [k for k, v in metric_results.items() if v == "error"]
         empty_metrics = [k for k, v in metric_results.items() if v == "empty"]
