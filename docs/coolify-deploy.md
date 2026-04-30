@@ -22,7 +22,21 @@ or another remote desktop that has the logged-in browser session.
 ## Required Environment Variables
 
 - `ADINTEL_DATABASE_URL`
+
+For the legacy API-key deployment:
+
 - `MCP_API_KEY` or `ADINTEL_MCP_API_KEY`
+
+For Google OAuth deployment:
+
+- `BASE_URL=https://adintel-mcp.3.15.29.33.sslip.io`
+- `GOOGLE_CLIENT_ID`
+- `GOOGLE_CLIENT_SECRET`
+- `ALLOWED_DOMAIN=feedmob.com`
+
+When the Google OAuth variables are present, the MCP endpoint is protected at
+`/mcp` by default and the static API-key gate is bypassed. Override the path
+with `ADINTEL_MCP_PATH` only if a client already depends on a different URL.
 
 ## Recommended Environment Variables
 
@@ -30,6 +44,21 @@ or another remote desktop that has the logged-in browser session.
 - `ADINTEL_WORKER_POLL_INTERVAL_S`
 - `ADINTEL_ALERT_WEBHOOK_URL`
 - `ADINTEL_APPFOLLOW_WORKSPACE`
+- `OAUTH_ACCESS_TOKEN_TTL_SECONDS=3600`
+- `OAUTH_REFRESH_TOKEN_TTL_SECONDS=2592000`
+
+## Google OAuth Setup
+
+Create a Google OAuth **Web application** client in Google Cloud Console and add
+this authorized redirect URI:
+
+```text
+https://adintel-mcp.3.15.29.33.sslip.io/auth/google/callback
+```
+
+The OAuth consent screen only needs `openid` and `email`. Access is restricted
+server-side to Google Workspace accounts whose `hd` claim and email domain both
+match `ALLOWED_DOMAIN`, which should be `feedmob.com`.
 
 ## Notes
 
@@ -48,5 +77,8 @@ or another remote desktop that has the logged-in browser session.
 2. Select the Dockerfile build pack.
 3. Set port `7860`.
 4. Add `ADINTEL_DATABASE_URL`.
-5. Add `MCP_API_KEY` or `ADINTEL_MCP_API_KEY`.
-6. Deploy.
+5. Add either the legacy API-key variables or the Google OAuth variables.
+6. Set the app domain to `https://adintel-mcp.3.15.29.33.sslip.io`.
+7. Deploy.
+8. Check `https://adintel-mcp.3.15.29.33.sslip.io/health`.
+9. For OAuth clients, use `https://adintel-mcp.3.15.29.33.sslip.io/mcp`.

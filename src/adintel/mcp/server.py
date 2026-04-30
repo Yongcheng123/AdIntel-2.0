@@ -7,8 +7,10 @@ from decimal import Decimal
 from collections import Counter
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.auth.settings import AuthSettings, ClientRegistrationOptions, RevocationOptions
 from mcp.server.transport_security import TransportSecuritySettings
 from sqlalchemy import cast, case, desc, func, Integer, or_, select, text
+from starlette.responses import JSONResponse
 
 from adintel.core.competitor_groups import build_competitor_run_plan, load_competitor_groups
 from adintel.core.settings import ROOT_DIR, get_settings
@@ -42,6 +44,7 @@ from adintel.db.repositories import (
     ScrapeRunRepository,
 )
 from adintel.db.session import build_session_factory
+from adintel.mcp.auth import build_google_oauth_provider_from_env
 
 
 SCHEMA_PATH = ROOT_DIR / "sql" / "schema.sql"
@@ -266,43 +269,51 @@ def _build_data_availability(session, advertiser_name: str | None = None) -> dic
         geo_prompt = geo_prompt_stats.get(geo_key, {})
         geo_citation_rows = geo_citation_counts.get(geo_key, 0)
         name_ci = advertiser.name.casefold()
-        socialpeta_run = socialpeta_freshness.get(advertiser.name) or socialpeta_freshness_ci.get(name_ci, {})
-        socialpeta_creative_rows = socialpeta_run.get("creative_rows", 0)
-        socialpeta_channel_rows = socialpeta_channel_counts.get(advertiser.name) or socialpeta_channel_counts_ci.get(
-            name_ci, 0
+        socialpeta_run = socialpeta_freshness.get(advertiser.name) or socialpeta_freshness_ci.get(
+            name_ci, {}
         )
-        socialpeta_tag_rows = socialpeta_tag_counts.get(advertiser.name) or socialpeta_tag_counts_ci.get(name_ci, 0)
+        socialpeta_creative_rows = socialpeta_run.get("creative_rows", 0)
+        socialpeta_channel_rows = socialpeta_channel_counts.get(
+            advertiser.name
+        ) or socialpeta_channel_counts_ci.get(name_ci, 0)
+        socialpeta_tag_rows = socialpeta_tag_counts.get(
+            advertiser.name
+        ) or socialpeta_tag_counts_ci.get(name_ci, 0)
         af_run = appfollow_freshness.get(advertiser.name) or appfollow_freshness_ci.get(name_ci, {})
         af_review_rows = af_run.get("review_rows", 0)
 
-        rows.append({
-            "advertiser_name": advertiser.name,
-            "domain": advertiser.domain,
-            "sensortower": {
-                "has_data": bool(st_run.get("total_runs") or st_download_rows),
-                "last_scraped": st_run.get("last_scraped"),
-                "successful_runs": st_run.get("total_runs", 0),
-                "download_rows": st_download_rows,
-            },
-            "geo_otterly": {
-                "has_data": bool(geo_prompt.get("prompt_rows") or geo_citation_rows),
-                "last_scraped": geo_prompt.get("last_scraped"),
-                "prompt_rows": geo_prompt.get("prompt_rows", 0),
-                "citation_rows": geo_citation_rows,
-            },
-            "socialpeta": {
-                "has_data": bool(socialpeta_creative_rows or socialpeta_channel_rows or socialpeta_tag_rows),
-                "last_scraped": socialpeta_run.get("last_scraped"),
-                "creative_rows": socialpeta_creative_rows,
-                "channel_rows": socialpeta_channel_rows,
-                "tag_rows": socialpeta_tag_rows,
-            },
-            "appfollow": {
-                "has_data": bool(af_review_rows),
-                "last_scraped": af_run.get("last_scraped"),
-                "review_rows": af_review_rows,
-            },
-        })
+        rows.append(
+            {
+                "advertiser_name": advertiser.name,
+                "domain": advertiser.domain,
+                "sensortower": {
+                    "has_data": bool(st_run.get("total_runs") or st_download_rows),
+                    "last_scraped": st_run.get("last_scraped"),
+                    "successful_runs": st_run.get("total_runs", 0),
+                    "download_rows": st_download_rows,
+                },
+                "geo_otterly": {
+                    "has_data": bool(geo_prompt.get("prompt_rows") or geo_citation_rows),
+                    "last_scraped": geo_prompt.get("last_scraped"),
+                    "prompt_rows": geo_prompt.get("prompt_rows", 0),
+                    "citation_rows": geo_citation_rows,
+                },
+                "socialpeta": {
+                    "has_data": bool(
+                        socialpeta_creative_rows or socialpeta_channel_rows or socialpeta_tag_rows
+                    ),
+                    "last_scraped": socialpeta_run.get("last_scraped"),
+                    "creative_rows": socialpeta_creative_rows,
+                    "channel_rows": socialpeta_channel_rows,
+                    "tag_rows": socialpeta_tag_rows,
+                },
+                "appfollow": {
+                    "has_data": bool(af_review_rows),
+                    "last_scraped": af_run.get("last_scraped"),
+                    "review_rows": af_review_rows,
+                },
+            }
+        )
 
     return {
         "summary": {
@@ -311,10 +322,18 @@ def _build_data_availability(session, advertiser_name: str | None = None) -> dic
             "geo_otterly_available": sum(1 for row in rows if row["geo_otterly"]["has_data"]),
             "socialpeta_available": sum(1 for row in rows if row["socialpeta"]["has_data"]),
             "appfollow_available": sum(1 for row in rows if row["appfollow"]["has_data"]),
-            "missing_sensortower": [row["advertiser_name"] for row in rows if not row["sensortower"]["has_data"]],
-            "missing_geo_otterly": [row["advertiser_name"] for row in rows if not row["geo_otterly"]["has_data"]],
-            "missing_socialpeta": [row["advertiser_name"] for row in rows if not row["socialpeta"]["has_data"]],
-            "missing_appfollow": [row["advertiser_name"] for row in rows if not row["appfollow"]["has_data"]],
+            "missing_sensortower": [
+                row["advertiser_name"] for row in rows if not row["sensortower"]["has_data"]
+            ],
+            "missing_geo_otterly": [
+                row["advertiser_name"] for row in rows if not row["geo_otterly"]["has_data"]
+            ],
+            "missing_socialpeta": [
+                row["advertiser_name"] for row in rows if not row["socialpeta"]["has_data"]
+            ],
+            "missing_appfollow": [
+                row["advertiser_name"] for row in rows if not row["appfollow"]["has_data"]
+            ],
         },
         "advertisers": rows,
     }
@@ -350,12 +369,22 @@ _METRIC_MAP = {
     "reviews": (
         SensorTowerReviewRecord,
         "period_date",
-        ["avg_rating", "rating_count", "star_1_count", "star_2_count", "star_3_count", "star_4_count", "star_5_count"],
+        [
+            "avg_rating",
+            "rating_count",
+            "star_1_count",
+            "star_2_count",
+            "star_3_count",
+            "star_4_count",
+            "star_5_count",
+        ],
     ),
 }
 
 
-def _build_timeseries(session, advertiser_name: str, metric: str, country: str, days: int) -> list[dict]:
+def _build_timeseries(
+    session, advertiser_name: str, metric: str, country: str, days: int
+) -> list[dict]:
     """Return chronological list of data-point dicts for a metric."""
     model, date_col_name, value_cols = _METRIC_MAP[metric]
     date_col = getattr(model, date_col_name)
@@ -364,9 +393,7 @@ def _build_timeseries(session, advertiser_name: str, metric: str, country: str, 
     if hasattr(model, "country"):
         q = q.where(model.country == country)
 
-    rows = session.scalars(
-        q.order_by(desc(date_col)).limit(days)
-    ).all()
+    rows = session.scalars(q.order_by(desc(date_col)).limit(days)).all()
 
     points = []
     for row in reversed(rows):
@@ -420,13 +447,15 @@ def _compute_category_benchmarks(
     if not category_tokens:
         return None
 
-    category_filter = or_(*[
-        or_(
-            SensorTowerMarketTopAppRecord.category.ilike(token),
-            SensorTowerMarketTopAppRecord.primary_category.ilike(f"%{token}%"),
-        )
-        for token in category_tokens
-    ])
+    category_filter = or_(
+        *[
+            or_(
+                SensorTowerMarketTopAppRecord.category.ilike(token),
+                SensorTowerMarketTopAppRecord.primary_category.ilike(f"%{token}%"),
+            )
+            for token in category_tokens
+        ]
+    )
 
     latest_month = session.scalar(
         select(func.max(SensorTowerMarketTopAppRecord.scrape_month))
@@ -452,10 +481,14 @@ def _compute_category_benchmarks(
 
     # Network adoption: % of category apps advertising on each network
     _NET_COLS = {
-        "admob": "ad_on_admob", "facebook": "ad_on_facebook",
-        "instagram": "ad_on_instagram", "tiktok": "ad_on_tiktok",
-        "youtube": "ad_on_youtube", "snapchat": "ad_on_snapchat",
-        "applovin": "ad_on_applovin", "unity": "ad_on_unity",
+        "admob": "ad_on_admob",
+        "facebook": "ad_on_facebook",
+        "instagram": "ad_on_instagram",
+        "tiktok": "ad_on_tiktok",
+        "youtube": "ad_on_youtube",
+        "snapchat": "ad_on_snapchat",
+        "applovin": "ad_on_applovin",
+        "unity": "ad_on_unity",
         "mintegral": "ad_on_mintegral",
     }
     network_adoption: dict[str, float] = {}
@@ -469,50 +502,58 @@ def _compute_category_benchmarks(
         pct = _percentile_rank(dl_list, client_downloads)
         med = _median(dl_list)
         if pct is not None and pct < 50:
-            signals.append({
-                "type": "below_median",
-                "metric": "downloads",
-                "client_value": client_downloads,
-                "category_median": med,
-                "percentile": pct,
-                "signal": f"Downloads at {pct}th percentile in {category} (median {med:,})",
-            })
+            signals.append(
+                {
+                    "type": "below_median",
+                    "metric": "downloads",
+                    "client_value": client_downloads,
+                    "category_median": med,
+                    "percentile": pct,
+                    "signal": f"Downloads at {pct}th percentile in {category} (median {med:,})",
+                }
+            )
 
     if client_dau is not None and dau_list:
         pct = _percentile_rank(dau_list, client_dau)
         med = _median(dau_list)
         if pct is not None and pct < 50:
-            signals.append({
-                "type": "below_median",
-                "metric": "dau",
-                "client_value": client_dau,
-                "category_median": med,
-                "percentile": pct,
-                "signal": f"DAU at {pct}th percentile in {category} (median {med:,})",
-            })
+            signals.append(
+                {
+                    "type": "below_median",
+                    "metric": "dau",
+                    "client_value": client_dau,
+                    "category_median": med,
+                    "percentile": pct,
+                    "signal": f"DAU at {pct}th percentile in {category} (median {med:,})",
+                }
+            )
 
     if client_sov is not None and sov_list:
         pct = _percentile_rank(sov_list, client_sov)
         med = _median(sov_list)
         if pct is not None and pct < 50:
-            signals.append({
-                "type": "below_median",
-                "metric": "impression_share",
-                "client_value": round(client_sov, 6),
-                "category_median": round(med, 6) if med else None,
-                "percentile": pct,
-                "signal": f"SOV at {pct}th percentile in {category}",
-            })
+            signals.append(
+                {
+                    "type": "below_median",
+                    "metric": "impression_share",
+                    "client_value": round(client_sov, 6),
+                    "category_median": round(med, 6) if med else None,
+                    "percentile": pct,
+                    "signal": f"SOV at {pct}th percentile in {category}",
+                }
+            )
 
     if client_networks is not None:
         for net, rate in network_adoption.items():
             if net not in client_networks and rate >= 0.25:
-                signals.append({
-                    "type": "missing_popular_network",
-                    "network": net,
-                    "category_adoption_rate": rate,
-                    "signal": f"{rate:.0%} of {category} apps advertise on {net}, but this advertiser does not",
-                })
+                signals.append(
+                    {
+                        "type": "missing_popular_network",
+                        "network": net,
+                        "category_adoption_rate": rate,
+                        "signal": f"{rate:.0%} of {category} apps advertise on {net}, but this advertiser does not",
+                    }
+                )
 
     return {
         "category": category,
@@ -579,7 +620,9 @@ def _compute_geo_snapshot(
         select(
             OtterlyPromptRecord.ai_engine,
             func.count().label("total_prompts"),
-            func.sum(case((OtterlyPromptRecord.domain_cited.is_(True), 1), else_=0)).label("cited_prompts"),
+            func.sum(case((OtterlyPromptRecord.domain_cited.is_(True), 1), else_=0)).label(
+                "cited_prompts"
+            ),
         )
         .where(OtterlyPromptRecord.target_brand_or_domain_name == target)
         .group_by(OtterlyPromptRecord.ai_engine)
@@ -590,12 +633,14 @@ def _compute_geo_snapshot(
     engines = []
     for row in engine_rows:
         t, c = row.total_prompts or 0, row.cited_prompts or 0
-        engines.append({
-            "engine": row.ai_engine,
-            "total": t,
-            "cited": c,
-            "visibility": round(c / t, 4) if t > 0 else 0,
-        })
+        engines.append(
+            {
+                "engine": row.ai_engine,
+                "total": t,
+                "cited": c,
+                "visibility": round(c / t, 4) if t > 0 else 0,
+            }
+        )
     engines.sort(key=lambda e: e["total"], reverse=True)
 
     # Top blind-spot prompts (high volume, not cited, competitors present)
@@ -629,31 +674,39 @@ def _compute_geo_snapshot(
     signals: list[dict] = []
     visibility_rate = round(cited / total, 4)
     if visibility_rate < 0.15:
-        signals.append({
-            "type": "low_overall_visibility",
-            "visibility_rate": visibility_rate,
-            "signal": f"Only {visibility_rate:.0%} AI search visibility — low presence across AI engines",
-        })
+        signals.append(
+            {
+                "type": "low_overall_visibility",
+                "visibility_rate": visibility_rate,
+                "signal": f"Only {visibility_rate:.0%} AI search visibility — low presence across AI engines",
+            }
+        )
     for eng in engines:
         if eng["total"] >= 5 and eng["visibility"] == 0:
-            signals.append({
-                "type": "zero_visibility_engine",
-                "engine": eng["engine"],
-                "signal": f"Zero citations on {eng['engine']} ({eng['total']} prompts tracked)",
-            })
+            signals.append(
+                {
+                    "type": "zero_visibility_engine",
+                    "engine": eng["engine"],
+                    "signal": f"Zero citations on {eng['engine']} ({eng['total']} prompts tracked)",
+                }
+            )
         elif eng["total"] >= 5 and eng["visibility"] < 0.10:
-            signals.append({
-                "type": "low_visibility_engine",
-                "engine": eng["engine"],
-                "visibility": eng["visibility"],
-                "signal": f"Only {eng['visibility']:.0%} visibility on {eng['engine']}",
-            })
+            signals.append(
+                {
+                    "type": "low_visibility_engine",
+                    "engine": eng["engine"],
+                    "visibility": eng["visibility"],
+                    "signal": f"Only {eng['visibility']:.0%} visibility on {eng['engine']}",
+                }
+            )
     if blind_spots:
-        signals.append({
-            "type": "blind_spots_found",
-            "count": len(blind_spots),
-            "signal": f"{len(blind_spots)} high-volume prompts where competitors appear but brand does not",
-        })
+        signals.append(
+            {
+                "type": "blind_spots_found",
+                "count": len(blind_spots),
+                "signal": f"{len(blind_spots)} high-volume prompts where competitors appear but brand does not",
+            }
+        )
 
     return {
         "target": target,
@@ -689,7 +742,9 @@ def _socialpeta_resolve_target(session, advertiser_name: str) -> str | None:
 
 
 def _socialpeta_snapshot(session, advertiser_name: str, country: str | None = None) -> dict | None:
-    rows_q = select(SocialPetaCreativeRecord).where(SocialPetaCreativeRecord.advertiser_name == advertiser_name)
+    rows_q = select(SocialPetaCreativeRecord).where(
+        SocialPetaCreativeRecord.advertiser_name == advertiser_name
+    )
     if country:
         rows_q = rows_q.where(SocialPetaCreativeRecord.country == country)
     rows = session.scalars(rows_q).all()
@@ -699,7 +754,9 @@ def _socialpeta_snapshot(session, advertiser_name: str, country: str | None = No
     channel_q = select(SocialPetaCreativeChannelRecord).where(
         SocialPetaCreativeChannelRecord.advertiser_name == advertiser_name
     )
-    tag_q = select(SocialPetaCreativeTagRecord).where(SocialPetaCreativeTagRecord.advertiser_name == advertiser_name)
+    tag_q = select(SocialPetaCreativeTagRecord).where(
+        SocialPetaCreativeTagRecord.advertiser_name == advertiser_name
+    )
     if country:
         channel_q = channel_q.where(SocialPetaCreativeChannelRecord.country == country)
         tag_q = tag_q.where(SocialPetaCreativeTagRecord.country == country)
@@ -736,10 +793,15 @@ def _socialpeta_snapshot(session, advertiser_name: str, country: str | None = No
         "primary_channel_distribution": dict(primary_channel_counts),
         "channel_distribution": dict(channel_counts),
         "tag_distribution": {
-            tag: {"count": cnt, "prevalence_pct": round(cnt / total_creatives, 4) if total_creatives else 0}
+            tag: {
+                "count": cnt,
+                "prevalence_pct": round(cnt / total_creatives, 4) if total_creatives else 0,
+            }
             for tag, cnt in tag_counts.items()
         },
-        "top_primary_channel": primary_channel_counts.most_common(1)[0][0] if primary_channel_counts else None,
+        "top_primary_channel": primary_channel_counts.most_common(1)[0][0]
+        if primary_channel_counts
+        else None,
         "top_channel": channel_counts.most_common(1)[0][0] if channel_counts else None,
         "top_tag": tag_counts.most_common(1)[0][0] if tag_counts else None,
         "top_pages": [
@@ -801,8 +863,14 @@ def _socialpeta_comparison_snapshot(
         competitors = found_names[1:]
         competitor_rows = [snapshots[name] for name in competitors]
         competitor_totals = [snap["creatives"] for snap in competitor_rows]
-        competitor_video_shares = [snap["video_share"] for snap in competitor_rows if snap["video_share"] is not None]
-        competitor_long_running = [snap["long_running_share"] for snap in competitor_rows if snap["long_running_share"] is not None]
+        competitor_video_shares = [
+            snap["video_share"] for snap in competitor_rows if snap["video_share"] is not None
+        ]
+        competitor_long_running = [
+            snap["long_running_share"]
+            for snap in competitor_rows
+            if snap["long_running_share"] is not None
+        ]
         competitor_channels = set()
         competitor_tags = set()
         for snap in competitor_rows:
@@ -815,19 +883,29 @@ def _socialpeta_comparison_snapshot(
             "competitors": competitors,
             "creative_volume_gap": {
                 "root": root_snap["creatives"],
-                "competitor_average": round(sum(competitor_totals) / len(competitor_totals), 1) if competitor_totals else None,
+                "competitor_average": round(sum(competitor_totals) / len(competitor_totals), 1)
+                if competitor_totals
+                else None,
             },
             "video_share_gap": {
                 "root": root_snap["video_share"],
-                "competitor_average": round(sum(competitor_video_shares) / len(competitor_video_shares), 4)
-                if competitor_video_shares else None,
+                "competitor_average": round(
+                    sum(competitor_video_shares) / len(competitor_video_shares), 4
+                )
+                if competitor_video_shares
+                else None,
             },
             "long_running_share_gap": {
                 "root": root_snap["long_running_share"],
-                "competitor_average": round(sum(competitor_long_running) / len(competitor_long_running), 4)
-                if competitor_long_running else None,
+                "competitor_average": round(
+                    sum(competitor_long_running) / len(competitor_long_running), 4
+                )
+                if competitor_long_running
+                else None,
             },
-            "channel_blind_spots": sorted(competitor_channels - set(root_snap["channel_distribution"].keys())),
+            "channel_blind_spots": sorted(
+                competitor_channels - set(root_snap["channel_distribution"].keys())
+            ),
             "tag_blind_spots": sorted(competitor_tags - set(root_snap["tag_distribution"].keys())),
         }
 
@@ -847,7 +925,9 @@ def _build_summary(advertiser_name: str, country: str | None = None) -> dict:
                     f"No advertiser found for '{advertiser_name}'. Did you mean: "
                     + ", ".join(f"'{s}'" for s in suggestions)
                     + "?"
-                ) if suggestions else f"No advertiser found for '{advertiser_name}'.",
+                )
+                if suggestions
+                else f"No advertiser found for '{advertiser_name}'.",
                 "did_you_mean": suggestions,
             }
 
@@ -862,20 +942,16 @@ def _build_summary(advertiser_name: str, country: str | None = None) -> dict:
             return q
 
         latest_download = session.scalar(
-            _q(SensorTowerDownloadRecord)
-            .order_by(desc(SensorTowerDownloadRecord.period_date))
+            _q(SensorTowerDownloadRecord).order_by(desc(SensorTowerDownloadRecord.period_date))
         )
         latest_usage = session.scalar(
-            _q(SensorTowerUsageRecord)
-            .order_by(desc(SensorTowerUsageRecord.period_date))
+            _q(SensorTowerUsageRecord).order_by(desc(SensorTowerUsageRecord.period_date))
         )
         latest_retention = session.scalar(
-            _q(SensorTowerRetentionRecord)
-            .order_by(desc(SensorTowerRetentionRecord.cohort_date))
+            _q(SensorTowerRetentionRecord).order_by(desc(SensorTowerRetentionRecord.cohort_date))
         )
         latest_ranking = session.scalar(
-            _q(SensorTowerRankingRecord)
-            .order_by(desc(SensorTowerRankingRecord.rank_date))
+            _q(SensorTowerRankingRecord).order_by(desc(SensorTowerRankingRecord.rank_date))
         )
         # Total SOV ("all" network aggregate)
         q_imp_all = _q(SensorTowerImpressionShareRecord).where(
@@ -885,9 +961,7 @@ def _build_summary(advertiser_name: str, country: str | None = None) -> dict:
             q_imp_all.order_by(desc(SensorTowerImpressionShareRecord.period_date))
         )
         # Per-network SOV breakdown: top networks by latest SOV
-        latest_imp_date = (
-            latest_impression_share.period_date if latest_impression_share else None
-        )
+        latest_imp_date = latest_impression_share.period_date if latest_impression_share else None
         top_networks: list[dict] = []
         if latest_imp_date:
             net_rows = session.scalars(
@@ -902,17 +976,14 @@ def _build_summary(advertiser_name: str, country: str | None = None) -> dict:
                 .limit(8)
             ).all()
             top_networks = [
-                {"network": r.network, "sov_pct": _to_float(r.sov_pct)}
-                for r in net_rows
+                {"network": r.network, "sov_pct": _to_float(r.sov_pct)} for r in net_rows
             ]
 
         demographics = session.scalars(
-            _q(SensorTowerDemographicRecord)
-            .order_by(SensorTowerDemographicRecord.age_bracket)
+            _q(SensorTowerDemographicRecord).order_by(SensorTowerDemographicRecord.age_bracket)
         ).all()
         latest_reviews = session.scalar(
-            _q(SensorTowerReviewRecord)
-            .order_by(desc(SensorTowerReviewRecord.period_date))
+            _q(SensorTowerReviewRecord).order_by(desc(SensorTowerReviewRecord.period_date))
         )
 
         # Review sentiment distribution from review_texts table
@@ -930,8 +1001,7 @@ def _build_summary(advertiser_name: str, country: str | None = None) -> dict:
                 SensorTowerReviewTextRecord.country == country
             )
         sentiment_dist = {
-            row.sentiment: row.cnt
-            for row in session.execute(review_sentiment_q).all()
+            row.sentiment: row.cnt for row in session.execute(review_sentiment_q).all()
         }
 
         # Top review tags — jsonb_array_elements_text to expand JSON array in SQL
@@ -947,13 +1017,8 @@ def _build_summary(advertiser_name: str, country: str | None = None) -> dict:
             .limit(10)
         )
         if country:
-            top_tags_q = top_tags_q.where(
-                SensorTowerReviewTextRecord.country == country
-            )
-        top_tags = [
-            {"tag": row.tag, "count": row.cnt}
-            for row in session.execute(top_tags_q).all()
-        ]
+            top_tags_q = top_tags_q.where(SensorTowerReviewTextRecord.country == country)
+        top_tags = [{"tag": row.tag, "count": row.cnt} for row in session.execute(top_tags_q).all()]
 
         # Version breakdown: avg rating per app_version (last 5 versions by recency)
         version_q = (
@@ -970,9 +1035,7 @@ def _build_summary(advertiser_name: str, country: str | None = None) -> dict:
             .limit(5)
         )
         if country:
-            version_q = version_q.where(
-                SensorTowerReviewTextRecord.country == country
-            )
+            version_q = version_q.where(SensorTowerReviewTextRecord.country == country)
         version_breakdown = [
             {
                 "app_version": row.app_version,
@@ -1000,8 +1063,7 @@ def _build_summary(advertiser_name: str, country: str | None = None) -> dict:
             .group_by(SensorTowerCreativeRecord.creative_type)
         )
         creative_type_dist = {
-            row.creative_type: row.cnt
-            for row in session.execute(creative_type_q).all()
+            row.creative_type: row.cnt for row in session.execute(creative_type_q).all()
         }
 
         creative_network_q = (
@@ -1015,8 +1077,7 @@ def _build_summary(advertiser_name: str, country: str | None = None) -> dict:
             .order_by(func.count().desc())
         )
         creative_network_dist = {
-            row.network: row.cnt
-            for row in session.execute(creative_network_q).all()
+            row.network: row.cnt for row in session.execute(creative_network_q).all()
         }
 
         creative_duration_q = (
@@ -1030,14 +1091,15 @@ def _build_summary(advertiser_name: str, country: str | None = None) -> dict:
             .order_by(func.count().desc())
         )
         creative_duration_dist = {
-            row.duration_bucket: row.cnt
-            for row in session.execute(creative_duration_q).all()
+            row.duration_bucket: row.cnt for row in session.execute(creative_duration_q).all()
         }
 
         # Monthly creative launch cadence (last 6 months)
         # Extract year/month as integers, group by year*100+month integer
-        year_month = (cast(func.extract("year", SensorTowerCreativeRecord.first_seen), Integer) * 100
-                     + cast(func.extract("month", SensorTowerCreativeRecord.first_seen), Integer)).label("ym")
+        year_month = (
+            cast(func.extract("year", SensorTowerCreativeRecord.first_seen), Integer) * 100
+            + cast(func.extract("month", SensorTowerCreativeRecord.first_seen), Integer)
+        ).label("ym")
         creative_cadence_q = (
             select(year_month, func.count().label("cnt"))
             .where(SensorTowerCreativeRecord.advertiser_name == canonical_name)
@@ -1060,22 +1122,15 @@ def _build_summary(advertiser_name: str, country: str | None = None) -> dict:
 
         # ASO: richer stats (top 20, plus summary counts)
         aso_keywords = session.scalars(
-            _q(SensorTowerAsoKeywordRecord)
-            .order_by(SensorTowerAsoKeywordRecord.rank)
-            .limit(20)
+            _q(SensorTowerAsoKeywordRecord).order_by(SensorTowerAsoKeywordRecord.rank).limit(20)
         ).all()
 
-        aso_total_q = (
-            select(
-                func.count().label("total"),
-                func.avg(SensorTowerAsoKeywordRecord.rank).label("avg_rank"),
-            )
-            .where(SensorTowerAsoKeywordRecord.advertiser_name == canonical_name)
-        )
+        aso_total_q = select(
+            func.count().label("total"),
+            func.avg(SensorTowerAsoKeywordRecord.rank).label("avg_rank"),
+        ).where(SensorTowerAsoKeywordRecord.advertiser_name == canonical_name)
         if country:
-            aso_total_q = aso_total_q.where(
-                SensorTowerAsoKeywordRecord.country == country
-            )
+            aso_total_q = aso_total_q.where(SensorTowerAsoKeywordRecord.country == country)
         aso_stats = session.execute(aso_total_q).one()
 
         aso_type_q = (
@@ -1088,13 +1143,8 @@ def _build_summary(advertiser_name: str, country: str | None = None) -> dict:
             .group_by(SensorTowerAsoKeywordRecord.keyword_type)
         )
         if country:
-            aso_type_q = aso_type_q.where(
-                SensorTowerAsoKeywordRecord.country == country
-            )
-        aso_type_dist = {
-            row.keyword_type: row.cnt
-            for row in session.execute(aso_type_q).all()
-        }
+            aso_type_q = aso_type_q.where(SensorTowerAsoKeywordRecord.country == country)
+        aso_type_dist = {row.keyword_type: row.cnt for row in session.execute(aso_type_q).all()}
 
         # ── Category benchmarks ──────────────────────────────────────
         _country = country or "US"
@@ -1119,7 +1169,9 @@ def _build_summary(advertiser_name: str, country: str | None = None) -> dict:
                 country=_country,
                 client_downloads=latest_download.downloads if latest_download else None,
                 client_dau=_to_float(latest_usage.avg_dau) if latest_usage else None,
-                client_sov=_to_float(latest_impression_share.sov_pct) if latest_impression_share else None,
+                client_sov=_to_float(latest_impression_share.sov_pct)
+                if latest_impression_share
+                else None,
                 client_networks=client_network_set,
             )
 
@@ -1287,6 +1339,9 @@ def create_mcp_server() -> FastMCP:
     # transports.
     is_vercel = bool(os.getenv("VERCEL"))
     is_hf_space = bool(os.getenv("SPACE_AUTHOR_NAME") or os.getenv("SPACE_ID"))
+    oauth_provider = build_google_oauth_provider_from_env()
+    mcp_path = os.getenv("ADINTEL_MCP_PATH") or ("/mcp" if oauth_provider else "/")
+    base_url = os.getenv("BASE_URL", "").rstrip("/")
     server = FastMCP(
         name="AdIntel",
         instructions=(
@@ -1388,15 +1443,41 @@ def create_mcp_server() -> FastMCP:
             "  Returns rating gap, sentiment leader, top keywords per brand.\n"
             "  Example: 'Chime, Current, Dave' reveals which neobank has the best user sentiment."
         ),
-        streamable_http_path="/",
+        streamable_http_path=mcp_path,
         host="0.0.0.0",
         stateless_http=is_vercel or is_hf_space,
+        auth_server_provider=oauth_provider,
+        auth=(
+            AuthSettings(
+                issuer_url=base_url,
+                resource_server_url=f"{base_url}{mcp_path}",
+                client_registration_options=ClientRegistrationOptions(
+                    enabled=True,
+                    valid_scopes=["mcp"],
+                    default_scopes=["mcp"],
+                ),
+                revocation_options=RevocationOptions(enabled=True),
+                required_scopes=["mcp"],
+            )
+            if oauth_provider and base_url
+            else None
+        ),
         transport_security=(
             TransportSecuritySettings(enable_dns_rebinding_protection=False)
             if is_vercel or is_hf_space
             else None
         ),
     )
+
+    @server.custom_route("/health", methods=["GET"], include_in_schema=False)
+    async def health_check(request) -> JSONResponse:
+        return JSONResponse({"status": "ok", "auth": "oauth" if oauth_provider else "api_key"})
+
+    if oauth_provider:
+
+        @server.custom_route("/auth/google/callback", methods=["GET"], include_in_schema=False)
+        async def google_oauth_callback(request):
+            return await oauth_provider.handle_google_callback(request)
 
     @server.resource(
         "schema://adintel",
@@ -1440,28 +1521,23 @@ def create_mcp_server() -> FastMCP:
             }
 
             # Download row counts per advertiser
-            dl_counts_q = (
-                select(
-                    SensorTowerDownloadRecord.advertiser_name,
-                    func.count().label("row_count"),
-                )
-                .group_by(SensorTowerDownloadRecord.advertiser_name)
-            )
+            dl_counts_q = select(
+                SensorTowerDownloadRecord.advertiser_name,
+                func.count().label("row_count"),
+            ).group_by(SensorTowerDownloadRecord.advertiser_name)
             dl_counts = {
-                row.advertiser_name: row.row_count
-                for row in session.execute(dl_counts_q).all()
+                row.advertiser_name: row.row_count for row in session.execute(dl_counts_q).all()
             }
 
             # GEO freshness: latest scraped_at from otterly prompts per target
-            geo_freshness_q = (
-                select(
-                    OtterlyPromptRecord.target_brand_or_domain_name,
-                    func.max(OtterlyPromptRecord.scraped_at).label("last_scraped"),
-                )
-                .group_by(OtterlyPromptRecord.target_brand_or_domain_name)
-            )
+            geo_freshness_q = select(
+                OtterlyPromptRecord.target_brand_or_domain_name,
+                func.max(OtterlyPromptRecord.scraped_at).label("last_scraped"),
+            ).group_by(OtterlyPromptRecord.target_brand_or_domain_name)
             geo_freshness = {
-                row.target_brand_or_domain_name: row.last_scraped.isoformat() if row.last_scraped else None
+                row.target_brand_or_domain_name: row.last_scraped.isoformat()
+                if row.last_scraped
+                else None
                 for row in session.execute(geo_freshness_q).all()
             }
 
@@ -1510,20 +1586,24 @@ def create_mcp_server() -> FastMCP:
         with _session_factory()() as session:
             canonical_name = _socialpeta_resolve_target(session, advertiser_name)
             if canonical_name is None:
-                return json.dumps({
-                    "found": False,
-                    "advertiser_name": advertiser_name,
-                    "message": "No SocialPeta creative data found for this advertiser.",
-                })
+                return json.dumps(
+                    {
+                        "found": False,
+                        "advertiser_name": advertiser_name,
+                        "message": "No SocialPeta creative data found for this advertiser.",
+                    }
+                )
 
             snapshot = _socialpeta_snapshot(session, canonical_name, country=country)
             if snapshot is None:
-                return json.dumps({
-                    "found": False,
-                    "advertiser_name": canonical_name,
-                    "country": country,
-                    "message": "No SocialPeta creative data found for this advertiser.",
-                })
+                return json.dumps(
+                    {
+                        "found": False,
+                        "advertiser_name": canonical_name,
+                        "country": country,
+                        "message": "No SocialPeta creative data found for this advertiser.",
+                    }
+                )
 
             groups = load_competitor_groups(get_settings().socialpeta_group_config_file)
             plan = build_competitor_run_plan(groups, canonical_name)
@@ -1600,7 +1680,9 @@ def create_mcp_server() -> FastMCP:
     def list_requested_advertisers() -> str:
         with _session_factory()() as session:
             rows = session.scalars(
-                select(RequestedAdvertiserRecord).order_by(desc(RequestedAdvertiserRecord.created_at))
+                select(RequestedAdvertiserRecord).order_by(
+                    desc(RequestedAdvertiserRecord.created_at)
+                )
             ).all()
         return json.dumps(
             {"requested_advertisers": [_serialize_requested(row) for row in rows]},
@@ -1642,7 +1724,9 @@ def create_mcp_server() -> FastMCP:
 
             reason = "manual" if force else ("missing" if not freshness["has_data"] else "stale")
             countries_list = (
-                [c.strip().upper() for c in countries.split(",") if c.strip()] if countries else None
+                [c.strip().upper() for c in countries.split(",") if c.strip()]
+                if countries
+                else None
             )
             metrics_list = (
                 [m.strip().lower() for m in metrics.split(",") if m.strip()] if metrics else None
@@ -1746,7 +1830,9 @@ def create_mcp_server() -> FastMCP:
         # Reject DML/DDL keywords as standalone words
         forbidden = r"\b(INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|TRUNCATE|GRANT|REVOKE)\b"
         if re.search(forbidden, upper):
-            return json.dumps({"error": "Only SELECT queries are allowed. Detected forbidden keyword."})
+            return json.dumps(
+                {"error": "Only SELECT queries are allowed. Detected forbidden keyword."}
+            )
 
         max_rows = max(1, min(max_rows, 500))
         try:
@@ -1761,20 +1847,27 @@ def create_mcp_server() -> FastMCP:
                     if i >= max_rows:
                         truncated = True
                         break
-                    rows.append({
-                        col: (
-                            _to_float(val) if isinstance(val, Decimal) else
-                            val.isoformat() if isinstance(val, (date, datetime)) else
-                            val
-                        )
-                        for col, val in zip(columns, row)
-                    })
-                return json.dumps({
-                    "columns": columns,
-                    "rows": rows,
-                    "row_count": len(rows),
-                    "truncated": truncated,
-                }, indent=2)
+                    rows.append(
+                        {
+                            col: (
+                                _to_float(val)
+                                if isinstance(val, Decimal)
+                                else val.isoformat()
+                                if isinstance(val, (date, datetime))
+                                else val
+                            )
+                            for col, val in zip(columns, row)
+                        }
+                    )
+                return json.dumps(
+                    {
+                        "columns": columns,
+                        "rows": rows,
+                        "row_count": len(rows),
+                        "truncated": truncated,
+                    },
+                    indent=2,
+                )
         except Exception as exc:
             return json.dumps({"error": str(exc)})
 
@@ -1810,10 +1903,7 @@ def create_mcp_server() -> FastMCP:
                 max_consecutive_failures=max_consecutive_failures,
             )
             if advertiser_name:
-                alerts = [
-                    a for a in alerts
-                    if a.get("advertiser_name") == advertiser_name
-                ]
+                alerts = [a for a in alerts if a.get("advertiser_name") == advertiser_name]
 
             result: dict = {
                 "alerts": {
@@ -1824,7 +1914,9 @@ def create_mcp_server() -> FastMCP:
                         "max_consecutive_failures": max_consecutive_failures,
                     },
                 },
-                "data_availability": _build_data_availability(session, advertiser_name=advertiser_name),
+                "data_availability": _build_data_availability(
+                    session, advertiser_name=advertiser_name
+                ),
                 "health": health,
             }
 
@@ -1857,9 +1949,11 @@ def create_mcp_server() -> FastMCP:
         days: int = 90,
     ) -> str:
         if metric not in _METRIC_MAP:
-            return json.dumps({
-                "error": f"Unknown metric '{metric}'. Available: {', '.join(_METRIC_MAP.keys())}",
-            })
+            return json.dumps(
+                {
+                    "error": f"Unknown metric '{metric}'. Available: {', '.join(_METRIC_MAP.keys())}",
+                }
+            )
 
         model, date_col_name, value_cols = _METRIC_MAP[metric]
         date_col = getattr(model, date_col_name)
@@ -1869,20 +1963,23 @@ def create_mcp_server() -> FastMCP:
             resolved = repo.resolve(advertiser_name)
             if resolved is None:
                 suggestions = repo.suggest(advertiser_name)
-                return json.dumps({
-                    "found": False,
-                    "advertiser_name": advertiser_name,
-                    "message": (
-                        f"No advertiser found for '{advertiser_name}'. Did you mean: "
-                        + ", ".join(f"'{s}'" for s in suggestions) + "?"
-                    ) if suggestions else f"No advertiser found for '{advertiser_name}'.",
-                    "did_you_mean": suggestions,
-                }, indent=2)
+                return json.dumps(
+                    {
+                        "found": False,
+                        "advertiser_name": advertiser_name,
+                        "message": (
+                            f"No advertiser found for '{advertiser_name}'. Did you mean: "
+                            + ", ".join(f"'{s}'" for s in suggestions)
+                            + "?"
+                        )
+                        if suggestions
+                        else f"No advertiser found for '{advertiser_name}'.",
+                        "did_you_mean": suggestions,
+                    },
+                    indent=2,
+                )
             canonical_name = resolved.name
-            q = (
-                select(model)
-                .where(model.advertiser_name == canonical_name)
-            )
+            q = select(model).where(model.advertiser_name == canonical_name)
             if hasattr(model, "country"):
                 q = q.where(model.country == country)
             if start_date:
@@ -1890,9 +1987,7 @@ def create_mcp_server() -> FastMCP:
             if end_date:
                 q = q.where(date_col <= date.fromisoformat(end_date))
 
-            rows = session.scalars(
-                q.order_by(desc(date_col)).limit(days)
-            ).all()
+            rows = session.scalars(q.order_by(desc(date_col)).limit(days)).all()
 
         data_points = []
         for row in reversed(rows):
@@ -1903,14 +1998,17 @@ def create_mcp_server() -> FastMCP:
                 point[col] = _to_float(getattr(row, col, None))
             data_points.append(point)
 
-        return json.dumps({
-            **_resolved_info(resolved),
-            "advertiser_name": canonical_name,
-            "metric": metric,
-            "country": country,
-            "count": len(data_points),
-            "data": data_points,
-        }, indent=2)
+        return json.dumps(
+            {
+                **_resolved_info(resolved),
+                "advertiser_name": canonical_name,
+                "metric": metric,
+                "country": country,
+                "count": len(data_points),
+                "data": data_points,
+            },
+            indent=2,
+        )
 
     @server.tool(
         name="get_full_comparison",
@@ -1946,8 +2044,11 @@ def create_mcp_server() -> FastMCP:
                         "found": False,
                         "message": (
                             f"No advertiser found for '{name}'. Did you mean: "
-                            + ", ".join(f"'{s}'" for s in suggestions) + "?"
-                        ) if suggestions else f"No advertiser found for '{name}'.",
+                            + ", ".join(f"'{s}'" for s in suggestions)
+                            + "?"
+                        )
+                        if suggestions
+                        else f"No advertiser found for '{name}'.",
                         "did_you_mean": suggestions,
                     }
                     continue
@@ -1961,12 +2062,12 @@ def create_mcp_server() -> FastMCP:
                     return q
 
                 latest_dl = session.scalar(
-                    _q(SensorTowerDownloadRecord)
-                    .order_by(desc(SensorTowerDownloadRecord.period_date))
+                    _q(SensorTowerDownloadRecord).order_by(
+                        desc(SensorTowerDownloadRecord.period_date)
+                    )
                 )
                 latest_usage = session.scalar(
-                    _q(SensorTowerUsageRecord)
-                    .order_by(desc(SensorTowerUsageRecord.period_date))
+                    _q(SensorTowerUsageRecord).order_by(desc(SensorTowerUsageRecord.period_date))
                 )
                 latest_imp = session.scalar(
                     _q(SensorTowerImpressionShareRecord)
@@ -1974,16 +2075,17 @@ def create_mcp_server() -> FastMCP:
                     .order_by(desc(SensorTowerImpressionShareRecord.period_date))
                 )
                 latest_retention = session.scalar(
-                    _q(SensorTowerRetentionRecord)
-                    .order_by(desc(SensorTowerRetentionRecord.cohort_date))
+                    _q(SensorTowerRetentionRecord).order_by(
+                        desc(SensorTowerRetentionRecord.cohort_date)
+                    )
                 )
                 latest_review = session.scalar(
-                    _q(SensorTowerReviewRecord)
-                    .order_by(desc(SensorTowerReviewRecord.period_date))
+                    _q(SensorTowerReviewRecord).order_by(desc(SensorTowerReviewRecord.period_date))
                 )
                 demographics = session.scalars(
-                    _q(SensorTowerDemographicRecord)
-                    .order_by(SensorTowerDemographicRecord.age_bracket)
+                    _q(SensorTowerDemographicRecord).order_by(
+                        SensorTowerDemographicRecord.age_bracket
+                    )
                 ).all()
 
                 snapshot = {
@@ -1991,7 +2093,9 @@ def create_mcp_server() -> FastMCP:
                     "revenue": _to_float(latest_dl.revenue) if latest_dl else None,
                     "downloads_date": latest_dl.period_date.isoformat() if latest_dl else None,
                     "avg_dau": _to_float(latest_usage.avg_dau) if latest_usage else None,
-                    "sessions_per_day": _to_float(latest_usage.sessions_per_day) if latest_usage else None,
+                    "sessions_per_day": _to_float(latest_usage.sessions_per_day)
+                    if latest_usage
+                    else None,
                     "usage_date": latest_usage.period_date.isoformat() if latest_usage else None,
                     "total_sov": _to_float(latest_imp.sov_pct) if latest_imp else None,
                     "sov_date": latest_imp.period_date.isoformat() if latest_imp else None,
@@ -2003,11 +2107,14 @@ def create_mcp_server() -> FastMCP:
                             "d30": _to_float(latest_retention.d30),
                             "d60": _to_float(latest_retention.d60),
                         }
-                        if latest_retention else None
+                        if latest_retention
+                        else None
                     ),
                     "avg_rating": _to_float(latest_review.avg_rating) if latest_review else None,
                     "rating_count": latest_review.rating_count if latest_review else None,
-                    "reviews_date": latest_review.period_date.isoformat() if latest_review else None,
+                    "reviews_date": latest_review.period_date.isoformat()
+                    if latest_review
+                    else None,
                     "demographics": [
                         {
                             "age_bracket": row.age_bracket,
@@ -2033,8 +2140,10 @@ def create_mcp_server() -> FastMCP:
                         func.max(SensorTowerImpressionShareRecord.period_date).label("latest_date"),
                         func.avg(
                             case(
-                                (SensorTowerImpressionShareRecord.period_date >= cutoff_7d,
-                                 SensorTowerImpressionShareRecord.sov_pct),
+                                (
+                                    SensorTowerImpressionShareRecord.period_date >= cutoff_7d,
+                                    SensorTowerImpressionShareRecord.sov_pct,
+                                ),
                                 else_=None,
                             )
                         ).label("avg_sov_7d"),
@@ -2042,7 +2151,10 @@ def create_mcp_server() -> FastMCP:
                     .where(SensorTowerImpressionShareRecord.advertiser_name == canonical_name)
                     .where(SensorTowerImpressionShareRecord.country == country)
                     .where(SensorTowerImpressionShareRecord.network.notin_(["all", "other"]))
-                    .where(SensorTowerImpressionShareRecord.period_date >= func.current_date() - text(f"interval '{days} days'"))
+                    .where(
+                        SensorTowerImpressionShareRecord.period_date
+                        >= func.current_date() - text(f"interval '{days} days'")
+                    )
                     .group_by(SensorTowerImpressionShareRecord.network)
                     .order_by(desc("latest_sov"))
                 ).all()
@@ -2063,9 +2175,7 @@ def create_mcp_server() -> FastMCP:
                 )
 
                 # ── Category benchmarks for this advertiser ───────────
-                client_net_set = {
-                    net for net, v in networks_map.items() if v["latest_sov"] > 0
-                }
+                client_net_set = {net for net, v in networks_map.items() if v["latest_sov"] > 0}
                 cat_bench = None
                 if advertiser.category:
                     cat_bench = _compute_category_benchmarks(
@@ -2080,6 +2190,7 @@ def create_mcp_server() -> FastMCP:
 
                 # ── AppFollow sentiment snapshot ───────────────────────
                 from datetime import timedelta
+
                 af_cutoff = date.today() - timedelta(days=days)
                 af_sent_q = (
                     select(
@@ -2104,7 +2215,9 @@ def create_mcp_server() -> FastMCP:
                             r.sentiment: {
                                 "count": r.cnt,
                                 "pct": round(r.cnt / total_af, 4) if total_af else 0,
-                                "avg_rating": round(float(r.avg_rating), 2) if r.avg_rating else None,
+                                "avg_rating": round(float(r.avg_rating), 2)
+                                if r.avg_rating
+                                else None,
                             }
                             for r in af_rows
                         },
@@ -2140,9 +2253,7 @@ def create_mcp_server() -> FastMCP:
             }
             all_nets = set().union(*network_sets.values())
             shared = set.intersection(*network_sets.values()) if network_sets else set()
-            exclusive: dict[str, list] = {
-                n: sorted(network_sets[n] - shared) for n in found
-            }
+            exclusive: dict[str, list] = {n: sorted(network_sets[n] - shared) for n in found}
 
             # SOV comparison
             sov_totals = {n: d["snapshot"]["total_sov"] or 0.0 for n, d in found.items()}
@@ -2150,7 +2261,8 @@ def create_mcp_server() -> FastMCP:
             sov_follower = min(sov_totals, key=lambda n: sov_totals[n])
             sov_ratio = (
                 round(sov_totals[sov_leader] / sov_totals[sov_follower], 1)
-                if sov_totals[sov_follower] > 0 else None
+                if sov_totals[sov_follower] > 0
+                else None
             )
 
             # Efficiency: downloads per SOV point
@@ -2166,7 +2278,11 @@ def create_mcp_server() -> FastMCP:
                 others = [o for o in found if o != n]
                 for other in others:
                     for net in exclusive.get(other, []):
-                        other_sov = found[other]["ad_placement"]["networks"].get(net, {}).get("latest_sov", 0)
+                        other_sov = (
+                            found[other]["ad_placement"]["networks"]
+                            .get(net, {})
+                            .get("latest_sov", 0)
+                        )
                         if other_sov and other_sov > 0:
                             opportunities.append(
                                 f"{n} has no presence on {net} — {other}'s active network (SOV {other_sov:.4%})"
@@ -2216,9 +2332,15 @@ def create_mcp_server() -> FastMCP:
                 if d["snapshot"].get("avg_rating") is not None
             }
             if len(advertisers_with_ratings) >= 2:
-                best_rated = max(advertisers_with_ratings, key=lambda n: advertisers_with_ratings[n])
-                worst_rated = min(advertisers_with_ratings, key=lambda n: advertisers_with_ratings[n])
-                rating_diff = advertisers_with_ratings[best_rated] - advertisers_with_ratings[worst_rated]
+                best_rated = max(
+                    advertisers_with_ratings, key=lambda n: advertisers_with_ratings[n]
+                )
+                worst_rated = min(
+                    advertisers_with_ratings, key=lambda n: advertisers_with_ratings[n]
+                )
+                rating_diff = (
+                    advertisers_with_ratings[best_rated] - advertisers_with_ratings[worst_rated]
+                )
                 rating_gap = {
                     "leader": best_rated,
                     "ratings": {n: round(v, 2) for n, v in advertisers_with_ratings.items()},
@@ -2235,20 +2357,20 @@ def create_mcp_server() -> FastMCP:
                     total_female = sum(row["female_pct"] or 0 for row in demo)
                     count = len(demo)
                     if count > 0:
-                        demographics_gap.append({
-                            "advertiser": n,
-                            "avg_male_pct": round(total_male / count, 1),
-                            "avg_female_pct": round(total_female / count, 1),
-                            "skew": "male-skewed" if total_male > total_female else "female-skewed",
-                        })
+                        demographics_gap.append(
+                            {
+                                "advertiser": n,
+                                "avg_male_pct": round(total_male / count, 1),
+                                "avg_female_pct": round(total_female / count, 1),
+                                "skew": "male-skewed"
+                                if total_male > total_female
+                                else "female-skewed",
+                            }
+                        )
 
             # GEO visibility gap analysis
             geo_gaps: dict = {}
-            geo_data = {
-                n: d["geo_snapshot"]
-                for n, d in found.items()
-                if d.get("geo_snapshot")
-            }
+            geo_data = {n: d["geo_snapshot"] for n, d in found.items() if d.get("geo_snapshot")}
             if len(geo_data) >= 2:
                 vis_rates = {n: g["visibility_rate"] for n, g in geo_data.items()}
                 geo_leader = max(vis_rates, key=lambda n: vis_rates[n])
@@ -2340,7 +2462,8 @@ def create_mcp_server() -> FastMCP:
                     "ratio": sov_ratio,
                     "insight": (
                         f"{sov_leader} commands {sov_ratio}x the total impression share of {sov_follower}."
-                        if sov_ratio else "SOV data unavailable for comparison."
+                        if sov_ratio
+                        else "SOV data unavailable for comparison."
                     ),
                 },
                 "efficiency_indicators": {
@@ -2407,17 +2530,21 @@ def create_mcp_server() -> FastMCP:
 
         valid_sort = {"downloads", "revenue", "dau", "impression_share", "rank"}
         if sort_by not in valid_sort:
-            return json.dumps({"error": f"Invalid sort_by. Options: {', '.join(sorted(valid_sort))}"})
+            return json.dumps(
+                {"error": f"Invalid sort_by. Options: {', '.join(sorted(valid_sort))}"}
+            )
 
         # Validate network_filter if provided
         network_col: str | None = None
         if network_filter:
             network_col = _MARKET_NETWORK_COLS.get(network_filter.lower())
             if network_col is None:
-                return json.dumps({
-                    "error": f"Unknown network_filter '{network_filter}'. "
-                             f"Options: {', '.join(sorted(_MARKET_NETWORK_COLS.keys()))}"
-                })
+                return json.dumps(
+                    {
+                        "error": f"Unknown network_filter '{network_filter}'. "
+                        f"Options: {', '.join(sorted(_MARKET_NETWORK_COLS.keys()))}"
+                    }
+                )
 
         # Resolve category name to ID or use as-is
         reverse = {v.lower(): k for k, v in CATEGORY_NAMES.items()}
@@ -2435,12 +2562,12 @@ def create_mcp_server() -> FastMCP:
             )
 
             # Match category flexibly (exact or case-insensitive)
-            q = q.where(
-                SensorTowerMarketTopAppRecord.category.ilike(category_name)
-            )
+            q = q.where(SensorTowerMarketTopAppRecord.category.ilike(category_name))
 
             if scrape_month:
-                q = q.where(SensorTowerMarketTopAppRecord.scrape_month == date.fromisoformat(scrape_month))
+                q = q.where(
+                    SensorTowerMarketTopAppRecord.scrape_month == date.fromisoformat(scrape_month)
+                )
             else:
                 # Latest available month
                 latest = session.scalar(
@@ -2449,10 +2576,12 @@ def create_mcp_server() -> FastMCP:
                     .where(SensorTowerMarketTopAppRecord.category.ilike(category_name))
                 )
                 if latest is None:
-                    return json.dumps({
-                        "error": f"No market data found for category='{category}', country='{country}'.",
-                        "hint": "Run 'adintel collect market-top-apps' to collect market data first.",
-                    })
+                    return json.dumps(
+                        {
+                            "error": f"No market data found for category='{category}', country='{country}'.",
+                            "hint": "Run 'adintel collect market-top-apps' to collect market data first.",
+                        }
+                    )
                 q = q.where(SensorTowerMarketTopAppRecord.scrape_month == latest)
 
             # Optional filters
@@ -2462,7 +2591,9 @@ def create_mcp_server() -> FastMCP:
             if min_downloads is not None:
                 q = q.where(SensorTowerMarketTopAppRecord.downloads >= min_downloads)
             if app_category:
-                q = q.where(SensorTowerMarketTopAppRecord.primary_category.ilike(f"%{app_category}%"))
+                q = q.where(
+                    SensorTowerMarketTopAppRecord.primary_category.ilike(f"%{app_category}%")
+                )
 
             # Sort
             sort_col = getattr(SensorTowerMarketTopAppRecord, sort_by)
@@ -2475,25 +2606,27 @@ def create_mcp_server() -> FastMCP:
 
         results = []
         for row in rows:
-            results.append({
-                "rank": row.rank,
-                "app_name": row.app_name,
-                "publisher_name": row.publisher_name,
-                "unified_app_id": row.unified_app_id,
-                "primary_category": row.primary_category,
-                "downloads": row.downloads,
-                "revenue": _to_float(row.revenue),
-                "dau": row.dau,
-                "impression_share": _to_float(row.impression_share),
-                "ad_on_admob": row.ad_on_admob,
-                "ad_on_facebook": row.ad_on_facebook,
-                "ad_on_tiktok": row.ad_on_tiktok,
-                "ad_on_youtube": row.ad_on_youtube,
-                "ad_on_applovin": row.ad_on_applovin,
-                "ad_on_unity": row.ad_on_unity,
-                "scrape_month": row.scrape_month.isoformat(),
-                "country": row.country,
-            })
+            results.append(
+                {
+                    "rank": row.rank,
+                    "app_name": row.app_name,
+                    "publisher_name": row.publisher_name,
+                    "unified_app_id": row.unified_app_id,
+                    "primary_category": row.primary_category,
+                    "downloads": row.downloads,
+                    "revenue": _to_float(row.revenue),
+                    "dau": row.dau,
+                    "impression_share": _to_float(row.impression_share),
+                    "ad_on_admob": row.ad_on_admob,
+                    "ad_on_facebook": row.ad_on_facebook,
+                    "ad_on_tiktok": row.ad_on_tiktok,
+                    "ad_on_youtube": row.ad_on_youtube,
+                    "ad_on_applovin": row.ad_on_applovin,
+                    "ad_on_unity": row.ad_on_unity,
+                    "scrape_month": row.scrape_month.isoformat(),
+                    "country": row.country,
+                }
+            )
 
         active_filters: dict = {}
         if network_filter:
@@ -2503,14 +2636,17 @@ def create_mcp_server() -> FastMCP:
         if app_category:
             active_filters["app_category"] = app_category
 
-        return json.dumps({
-            "category": category_name,
-            "country": country,
-            "sort_by": sort_by,
-            "filters": active_filters,
-            "count": len(results),
-            "data": results,
-        }, indent=2)
+        return json.dumps(
+            {
+                "category": category_name,
+                "country": country,
+                "sort_by": sort_by,
+                "filters": active_filters,
+                "count": len(results),
+                "data": results,
+            },
+            indent=2,
+        )
 
     # ── GEO (Generative Engine Optimization) Analysis Tools ─────────────
 
@@ -2573,7 +2709,9 @@ def create_mcp_server() -> FastMCP:
             select(
                 OtterlyPromptRecord.ai_engine,
                 func.count().label("total_prompts"),
-                func.sum(case((OtterlyPromptRecord.domain_cited.is_(True), 1), else_=0)).label("cited_prompts"),
+                func.sum(case((OtterlyPromptRecord.domain_cited.is_(True), 1), else_=0)).label(
+                    "cited_prompts"
+                ),
                 func.avg(OtterlyPromptRecord.sentiment_score).label("avg_sentiment"),
                 func.avg(OtterlyPromptRecord.target_rank).label("avg_rank"),
             )
@@ -2587,14 +2725,18 @@ def create_mcp_server() -> FastMCP:
         for row in rows:
             total = row.total_prompts or 0
             cited = row.cited_prompts or 0
-            result.append({
-                "ai_engine": row.ai_engine,
-                "total_prompts": total,
-                "cited_prompts": cited,
-                "visibility_rate": round(cited / total, 4) if total > 0 else 0,
-                "avg_sentiment": round(float(row.avg_sentiment), 2) if row.avg_sentiment is not None else None,
-                "avg_rank": round(float(row.avg_rank), 1) if row.avg_rank is not None else None,
-            })
+            result.append(
+                {
+                    "ai_engine": row.ai_engine,
+                    "total_prompts": total,
+                    "cited_prompts": cited,
+                    "visibility_rate": round(cited / total, 4) if total > 0 else 0,
+                    "avg_sentiment": round(float(row.avg_sentiment), 2)
+                    if row.avg_sentiment is not None
+                    else None,
+                    "avg_rank": round(float(row.avg_rank), 1) if row.avg_rank is not None else None,
+                }
+            )
         return sorted(result, key=lambda x: x["total_prompts"], reverse=True)
 
     def _geo_sentiment_distribution(session, target: str, country: str | None) -> dict:
@@ -2612,13 +2754,17 @@ def create_mcp_server() -> FastMCP:
         rows = session.execute(q).all()
         return {row.sentiment_label: row.cnt for row in rows}
 
-    def _geo_top_cited_domains(session, target: str, country: str | None, limit: int = 15) -> list[dict]:
+    def _geo_top_cited_domains(
+        session, target: str, country: str | None, limit: int = 15
+    ) -> list[dict]:
         q = (
             select(
                 OtterlyCitationRecord.cited_domain,
                 func.sum(OtterlyCitationRecord.citation_count).label("total_citations"),
                 func.count().label("appearances"),
-                func.sum(case((OtterlyCitationRecord.brand_mentioned.is_(True), 1), else_=0)).label("brand_mentions"),
+                func.sum(case((OtterlyCitationRecord.brand_mentioned.is_(True), 1), else_=0)).label(
+                    "brand_mentions"
+                ),
             )
             .where(OtterlyCitationRecord.target_brand_or_domain_name == target)
             .where(OtterlyCitationRecord.cited_domain.isnot(None))
@@ -2661,26 +2807,27 @@ def create_mcp_server() -> FastMCP:
             advertiser_name = _resolve_geo_target(session, advertiser_name)
 
             # ── Visibility overview ──────────────────────────────────
-            overview_q = (
-                select(
-                    func.count().label("total"),
-                    func.sum(case((OtterlyPromptRecord.domain_cited.is_(True), 1), else_=0)).label("cited"),
-                    func.min(OtterlyPromptRecord.query_window_start_date).label("earliest"),
-                    func.max(OtterlyPromptRecord.query_window_end_date).label("latest"),
-                )
-                .where(OtterlyPromptRecord.target_brand_or_domain_name == advertiser_name)
-            )
+            overview_q = select(
+                func.count().label("total"),
+                func.sum(case((OtterlyPromptRecord.domain_cited.is_(True), 1), else_=0)).label(
+                    "cited"
+                ),
+                func.min(OtterlyPromptRecord.query_window_start_date).label("earliest"),
+                func.max(OtterlyPromptRecord.query_window_end_date).label("latest"),
+            ).where(OtterlyPromptRecord.target_brand_or_domain_name == advertiser_name)
             if country:
                 overview_q = overview_q.where(OtterlyPromptRecord.country_code == country.lower())
 
             stats = session.execute(overview_q).one()
             total = stats.total or 0
             if total == 0:
-                return json.dumps({
-                    "found": False,
-                    "advertiser_name": advertiser_name,
-                    "message": "No Otterly GEO data found for this advertiser.",
-                })
+                return json.dumps(
+                    {
+                        "found": False,
+                        "advertiser_name": advertiser_name,
+                        "message": "No Otterly GEO data found for this advertiser.",
+                    }
+                )
 
             cited = stats.cited or 0
             engine_breakdown = _geo_engine_breakdown(session, advertiser_name, country)
@@ -2688,15 +2835,16 @@ def create_mcp_server() -> FastMCP:
             top_domains = _geo_top_cited_domains(session, advertiser_name, country, limit=limit)
 
             # ── Citation analysis ────────────────────────────────────
-            cit_overview_q = (
-                select(
-                    func.count().label("total"),
-                    func.sum(case((OtterlyCitationRecord.brand_mentioned.is_(True), 1), else_=0)).label("brand_mentioned"),
-                )
-                .where(OtterlyCitationRecord.target_brand_or_domain_name == advertiser_name)
-            )
+            cit_overview_q = select(
+                func.count().label("total"),
+                func.sum(case((OtterlyCitationRecord.brand_mentioned.is_(True), 1), else_=0)).label(
+                    "brand_mentioned"
+                ),
+            ).where(OtterlyCitationRecord.target_brand_or_domain_name == advertiser_name)
             if country:
-                cit_overview_q = cit_overview_q.where(OtterlyCitationRecord.country_code == country.lower())
+                cit_overview_q = cit_overview_q.where(
+                    OtterlyCitationRecord.country_code == country.lower()
+                )
             cit_stats = session.execute(cit_overview_q).one()
             cit_total = cit_stats.total or 0
             brand_mentioned_count = cit_stats.brand_mentioned or 0
@@ -2709,13 +2857,17 @@ def create_mcp_server() -> FastMCP:
                         OtterlyCitationRecord.ai_engine,
                         func.count().label("citation_rows"),
                         func.sum(OtterlyCitationRecord.citation_count).label("total_citations"),
-                        func.sum(case((OtterlyCitationRecord.brand_mentioned.is_(True), 1), else_=0)).label("brand_mentions"),
+                        func.sum(
+                            case((OtterlyCitationRecord.brand_mentioned.is_(True), 1), else_=0)
+                        ).label("brand_mentions"),
                     )
                     .where(OtterlyCitationRecord.target_brand_or_domain_name == advertiser_name)
                     .group_by(OtterlyCitationRecord.ai_engine)
                 )
                 if country:
-                    cit_engine_q = cit_engine_q.where(OtterlyCitationRecord.country_code == country.lower())
+                    cit_engine_q = cit_engine_q.where(
+                        OtterlyCitationRecord.country_code == country.lower()
+                    )
                 cit_engine_rows = session.execute(cit_engine_q).all()
                 cit_engine_breakdown = [
                     {
@@ -2724,7 +2876,9 @@ def create_mcp_server() -> FastMCP:
                         "total_citations": _to_float(row.total_citations) or 0,
                         "brand_mentioned_count": _to_float(row.brand_mentions) or 0,
                     }
-                    for row in sorted(cit_engine_rows, key=lambda r: r.total_citations or 0, reverse=True)
+                    for row in sorted(
+                        cit_engine_rows, key=lambda r: r.total_citations or 0, reverse=True
+                    )
                 ]
 
             # Domain category distribution
@@ -2743,7 +2897,11 @@ def create_mcp_server() -> FastMCP:
             if country:
                 cat_q = cat_q.where(OtterlyCitationRecord.country_code == country.lower())
             category_distribution = [
-                {"category": row.domain_category, "count": row.cnt, "total_citations": _to_float(row.total_citations) or 0}
+                {
+                    "category": row.domain_category,
+                    "count": row.cnt,
+                    "total_citations": _to_float(row.total_citations) or 0,
+                }
                 for row in session.execute(cat_q).all()
             ]
 
@@ -2759,6 +2917,7 @@ def create_mcp_server() -> FastMCP:
             rows = session.execute(cit_q).scalars().all()
             comp_counts: dict[str, int] = {}
             import json
+
             for row in rows:
                 try:
                     competitors = json.loads(row) if isinstance(row, str) else (row or [])
@@ -2769,12 +2928,13 @@ def create_mcp_server() -> FastMCP:
                         comp_counts[comp] = comp_counts.get(comp, 0) + 1
 
             # Keep top 10
-            all_competitors = dict(sorted(comp_counts.items(), key=lambda x: x[1], reverse=True)[:10])
+            all_competitors = dict(
+                sorted(comp_counts.items(), key=lambda x: x[1], reverse=True)[:10]
+            )
 
             # ── Prompt insights ──────────────────────────────────────
-            prompt_q = (
-                select(OtterlyPromptRecord)
-                .where(OtterlyPromptRecord.target_brand_or_domain_name == advertiser_name)
+            prompt_q = select(OtterlyPromptRecord).where(
+                OtterlyPromptRecord.target_brand_or_domain_name == advertiser_name
             )
             if country:
                 prompt_q = prompt_q.where(OtterlyPromptRecord.country_code == country.lower())
@@ -2791,7 +2951,9 @@ def create_mcp_server() -> FastMCP:
                     "ai_engine": p.ai_engine,
                     "sentiment": p.sentiment_label,
                 }
-                for p in sorted(with_volume, key=lambda p: p.prompt_volume or 0, reverse=True)[:limit]
+                for p in sorted(with_volume, key=lambda p: p.prompt_volume or 0, reverse=True)[
+                    :limit
+                ]
             ]
 
             # Best ranked prompts
@@ -2817,7 +2979,9 @@ def create_mcp_server() -> FastMCP:
                     "competitors_present": p.competitors,
                     "sentiment": p.sentiment_label,
                 }
-                for p in sorted(blind_spots, key=lambda p: p.prompt_volume or 0, reverse=True)[:limit]
+                for p in sorted(blind_spots, key=lambda p: p.prompt_volume or 0, reverse=True)[
+                    :limit
+                ]
             ]
 
             # Negative sentiment prompts
@@ -2832,39 +2996,44 @@ def create_mcp_server() -> FastMCP:
                 for p in sorted(negative, key=lambda p: p.prompt_volume or 0, reverse=True)[:10]
             ]
 
-        return json.dumps({
-            "advertiser_name": advertiser_name,
-            "country": country,
-            "visibility": {
-                "date_range": {
-                    "earliest": stats.earliest.isoformat() if stats.earliest else None,
-                    "latest": stats.latest.isoformat() if stats.latest else None,
+        return json.dumps(
+            {
+                "advertiser_name": advertiser_name,
+                "country": country,
+                "visibility": {
+                    "date_range": {
+                        "earliest": stats.earliest.isoformat() if stats.earliest else None,
+                        "latest": stats.latest.isoformat() if stats.latest else None,
+                    },
+                    "total_prompts_tracked": total,
+                    "prompts_where_cited": cited,
+                    "visibility_rate": round(cited / total, 4) if total > 0 else 0,
                 },
-                "total_prompts_tracked": total,
-                "prompts_where_cited": cited,
-                "visibility_rate": round(cited / total, 4) if total > 0 else 0,
+                "engine_breakdown": engine_breakdown,
+                "sentiment_distribution": sentiment_dist,
+                "citations": {
+                    "total_citation_rows": cit_total,
+                    "brand_mentioned_count": brand_mentioned_count,
+                    "brand_mention_rate": round(brand_mentioned_count / cit_total, 4)
+                    if cit_total > 0
+                    else 0,
+                    "top_cited_domains": top_domains,
+                    "per_engine": cit_engine_breakdown,
+                    "category_distribution": category_distribution,
+                    "competitors_in_citations": dict(
+                        sorted(all_competitors.items(), key=lambda x: x[1], reverse=True)[:10]
+                    ),
+                },
+                "prompts": {
+                    "total": len(all_prompts),
+                    "top_by_volume": top_prompts,
+                    "best_ranked": best_ranked_prompts,
+                    "blind_spots": blind_spot_prompts,
+                    "negative_sentiment": negative_prompts,
+                },
             },
-            "engine_breakdown": engine_breakdown,
-            "sentiment_distribution": sentiment_dist,
-            "citations": {
-                "total_citation_rows": cit_total,
-                "brand_mentioned_count": brand_mentioned_count,
-                "brand_mention_rate": round(brand_mentioned_count / cit_total, 4) if cit_total > 0 else 0,
-                "top_cited_domains": top_domains,
-                "per_engine": cit_engine_breakdown,
-                "category_distribution": category_distribution,
-                "competitors_in_citations": dict(
-                    sorted(all_competitors.items(), key=lambda x: x[1], reverse=True)[:10]
-                ),
-            },
-            "prompts": {
-                "total": len(all_prompts),
-                "top_by_volume": top_prompts,
-                "best_ranked": best_ranked_prompts,
-                "blind_spots": blind_spot_prompts,
-                "negative_sentiment": negative_prompts,
-            },
-        }, indent=2)
+            indent=2,
+        )
 
     @server.tool(
         name="compare_geo_visibility",
@@ -2892,15 +3061,16 @@ def create_mcp_server() -> FastMCP:
         with _session_factory()() as session:
             for name in names:
                 # Aggregate counts via SQL
-                overview_q = (
-                    select(
-                        func.count().label("total"),
-                        func.sum(case((OtterlyPromptRecord.domain_cited.is_(True), 1), else_=0)).label("cited"),
-                    )
-                    .where(OtterlyPromptRecord.target_brand_or_domain_name == name)
-                )
+                overview_q = select(
+                    func.count().label("total"),
+                    func.sum(case((OtterlyPromptRecord.domain_cited.is_(True), 1), else_=0)).label(
+                        "cited"
+                    ),
+                ).where(OtterlyPromptRecord.target_brand_or_domain_name == name)
                 if country:
-                    overview_q = overview_q.where(OtterlyPromptRecord.country_code == country.lower())
+                    overview_q = overview_q.where(
+                        OtterlyPromptRecord.country_code == country.lower()
+                    )
 
                 stats = session.execute(overview_q).one()
                 total = stats.total or 0
@@ -2924,6 +3094,7 @@ def create_mcp_server() -> FastMCP:
                 comp_rows = session.execute(comp_q).scalars().all()
                 comp_counts: dict[str, int] = {}
                 import json
+
                 for row in comp_rows:
                     try:
                         competitors = json.loads(row) if isinstance(row, str) else (row or [])
@@ -2933,7 +3104,9 @@ def create_mcp_server() -> FastMCP:
                         for comp in competitors:
                             comp_counts[comp] = comp_counts.get(comp, 0) + 1
 
-                top_competitors = dict(sorted(comp_counts.items(), key=lambda x: x[1], reverse=True)[:10])
+                top_competitors = dict(
+                    sorted(comp_counts.items(), key=lambda x: x[1], reverse=True)[:10]
+                )
 
                 advertiser_data[name] = {
                     "found": True,
@@ -2974,10 +3147,11 @@ def create_mcp_server() -> FastMCP:
 
                 # Competitor overlap
                 competitor_sets = {
-                    n: set(d.get("top_competitors_mentioned", {}).keys())
-                    for n, d in found.items()
+                    n: set(d.get("top_competitors_mentioned", {}).keys()) for n, d in found.items()
                 }
-                shared_competitors = sorted(set.intersection(*competitor_sets.values())) if competitor_sets else []
+                shared_competitors = (
+                    sorted(set.intersection(*competitor_sets.values())) if competitor_sets else []
+                )
 
                 opportunities: list[str] = []
                 leader_name, leader_rate = vis_ranking[0]
@@ -3000,12 +3174,14 @@ def create_mcp_server() -> FastMCP:
                     "opportunities": opportunities,
                 }
 
-        return json.dumps({
-            "country": country,
-            "advertisers": advertiser_data,
-            "gap_analysis": gap_analysis,
-        }, indent=2)
-
+        return json.dumps(
+            {
+                "country": country,
+                "advertisers": advertiser_data,
+                "gap_analysis": gap_analysis,
+            },
+            indent=2,
+        )
 
     @server.tool(
         name="get_geo_data_availability",
@@ -3028,26 +3204,47 @@ def create_mcp_server() -> FastMCP:
 
             def _citation_filter(q):
                 if advertiser_name:
-                    q = q.where(OtterlyCitationRecord.target_brand_or_domain_name == advertiser_name)
+                    q = q.where(
+                        OtterlyCitationRecord.target_brand_or_domain_name == advertiser_name
+                    )
                 return q
 
             # Overall prompt stats
-            p_total = session.scalar(_prompt_filter(select(func.count()).select_from(OtterlyPromptRecord))) or 0
-            c_total = session.scalar(_citation_filter(select(func.count()).select_from(OtterlyCitationRecord))) or 0
+            p_total = (
+                session.scalar(
+                    _prompt_filter(select(func.count()).select_from(OtterlyPromptRecord))
+                )
+                or 0
+            )
+            c_total = (
+                session.scalar(
+                    _citation_filter(select(func.count()).select_from(OtterlyCitationRecord))
+                )
+                or 0
+            )
 
             if p_total == 0 and c_total == 0:
-                return json.dumps({
-                    "found": False,
-                    "advertiser_name": advertiser_name,
-                    "message": "No GEO data found." + (f" '{advertiser_name}' is not tracked in Otterly." if advertiser_name else ""),
-                })
+                return json.dumps(
+                    {
+                        "found": False,
+                        "advertiser_name": advertiser_name,
+                        "message": "No GEO data found."
+                        + (
+                            f" '{advertiser_name}' is not tracked in Otterly."
+                            if advertiser_name
+                            else ""
+                        ),
+                    }
+                )
 
             # Date range
             date_q = _prompt_filter(
                 select(
                     func.min(OtterlyPromptRecord.query_window_start_date).label("earliest"),
                     func.max(OtterlyPromptRecord.query_window_end_date).label("latest"),
-                    func.count(OtterlyPromptRecord.query_window_end_date.distinct()).label("snapshots"),
+                    func.count(OtterlyPromptRecord.query_window_end_date.distinct()).label(
+                        "snapshots"
+                    ),
                 ).select_from(OtterlyPromptRecord)
             )
             dates = session.execute(date_q).one()
@@ -3058,10 +3255,17 @@ def create_mcp_server() -> FastMCP:
                     OtterlyPromptRecord.target_brand_or_domain_name,
                     OtterlyPromptRecord.ai_engine,
                     func.count().label("prompt_rows"),
-                    func.sum(case((OtterlyPromptRecord.domain_cited.is_(True), 1), else_=0)).label("cited"),
-                ).select_from(OtterlyPromptRecord)
-                .group_by(OtterlyPromptRecord.target_brand_or_domain_name, OtterlyPromptRecord.ai_engine)
-                .order_by(OtterlyPromptRecord.target_brand_or_domain_name, OtterlyPromptRecord.ai_engine)
+                    func.sum(case((OtterlyPromptRecord.domain_cited.is_(True), 1), else_=0)).label(
+                        "cited"
+                    ),
+                )
+                .select_from(OtterlyPromptRecord)
+                .group_by(
+                    OtterlyPromptRecord.target_brand_or_domain_name, OtterlyPromptRecord.ai_engine
+                )
+                .order_by(
+                    OtterlyPromptRecord.target_brand_or_domain_name, OtterlyPromptRecord.ai_engine
+                )
             )
             brand_rows = session.execute(brand_q).all()
 
@@ -3072,12 +3276,14 @@ def create_mcp_server() -> FastMCP:
                 if b not in brands_summary:
                     brands_summary[b] = {"engines": [], "total_prompts": 0, "total_cited": 0}
                 rate = round(row.cited / row.prompt_rows, 3) if row.prompt_rows else 0
-                brands_summary[b]["engines"].append({
-                    "engine": row.ai_engine,
-                    "prompts": row.prompt_rows,
-                    "cited": row.cited,
-                    "visibility_rate": rate,
-                })
+                brands_summary[b]["engines"].append(
+                    {
+                        "engine": row.ai_engine,
+                        "prompts": row.prompt_rows,
+                        "cited": row.cited,
+                        "visibility_rate": rate,
+                    }
+                )
                 brands_summary[b]["total_prompts"] += row.prompt_rows
                 brands_summary[b]["total_cited"] += row.cited
 
@@ -3086,59 +3292,90 @@ def create_mcp_server() -> FastMCP:
                 select(
                     OtterlyCitationRecord.target_brand_or_domain_name,
                     func.count().label("citation_rows"),
-                ).select_from(OtterlyCitationRecord)
+                )
+                .select_from(OtterlyCitationRecord)
                 .group_by(OtterlyCitationRecord.target_brand_or_domain_name)
             )
             for row in session.execute(cit_q).all():
                 if row.target_brand_or_domain_name in brands_summary:
-                    brands_summary[row.target_brand_or_domain_name]["citation_rows"] = row.citation_rows
+                    brands_summary[row.target_brand_or_domain_name]["citation_rows"] = (
+                        row.citation_rows
+                    )
 
             # Field completeness gaps (on full table or filtered)
-            null_sentiment = session.scalar(
-                _prompt_filter(select(func.count()).select_from(OtterlyPromptRecord).where(OtterlyPromptRecord.sentiment_label.is_(None)))
-            ) or 0
+            null_sentiment = (
+                session.scalar(
+                    _prompt_filter(
+                        select(func.count())
+                        .select_from(OtterlyPromptRecord)
+                        .where(OtterlyPromptRecord.sentiment_label.is_(None))
+                    )
+                )
+                or 0
+            )
             gap_pct = round(null_sentiment / p_total, 3) if p_total else 0
             field_gaps = []
             if gap_pct > 0.05:
-                field_gaps.append({
-                    "field": "sentiment_label",
-                    "null_rows": null_sentiment,
-                    "null_pct": gap_pct,
-                    "impact": "sentiment analysis and negative-prompt detection will be incomplete",
-                })
+                field_gaps.append(
+                    {
+                        "field": "sentiment_label",
+                        "null_rows": null_sentiment,
+                        "null_pct": gap_pct,
+                        "impact": "sentiment analysis and negative-prompt detection will be incomplete",
+                    }
+                )
 
             # Engines present
-            engines = [r[0] for r in session.execute(
-                _prompt_filter(select(OtterlyPromptRecord.ai_engine).distinct().select_from(OtterlyPromptRecord))
-            ).all()]
-            countries = [r[0] for r in session.execute(
-                _prompt_filter(select(OtterlyPromptRecord.country_code).distinct().select_from(OtterlyPromptRecord))
-            ).all()]
+            engines = [
+                r[0]
+                for r in session.execute(
+                    _prompt_filter(
+                        select(OtterlyPromptRecord.ai_engine)
+                        .distinct()
+                        .select_from(OtterlyPromptRecord)
+                    )
+                ).all()
+            ]
+            countries = [
+                r[0]
+                for r in session.execute(
+                    _prompt_filter(
+                        select(OtterlyPromptRecord.country_code)
+                        .distinct()
+                        .select_from(OtterlyPromptRecord)
+                    )
+                ).all()
+            ]
 
-        return json.dumps({
-            "scope": advertiser_name or "all brands",
-            "summary": {
-                "brands_tracked": len(brands_summary),
-                "ai_engines": sorted(engines),
-                "countries": sorted(countries),
-                "date_range": {
-                    "start": dates.earliest.isoformat() if dates.earliest else None,
-                    "end": dates.latest.isoformat() if dates.latest else None,
-                    "snapshots": dates.snapshots,
+        return json.dumps(
+            {
+                "scope": advertiser_name or "all brands",
+                "summary": {
+                    "brands_tracked": len(brands_summary),
+                    "ai_engines": sorted(engines),
+                    "countries": sorted(countries),
+                    "date_range": {
+                        "start": dates.earliest.isoformat() if dates.earliest else None,
+                        "end": dates.latest.isoformat() if dates.latest else None,
+                        "snapshots": dates.snapshots,
+                    },
+                    "total_prompt_rows": p_total,
+                    "total_citation_rows": c_total,
                 },
-                "total_prompt_rows": p_total,
-                "total_citation_rows": c_total,
+                "brands": {
+                    b: {
+                        **d,
+                        "visibility_rate": round(d["total_cited"] / d["total_prompts"], 3)
+                        if d["total_prompts"]
+                        else 0,
+                    }
+                    for b, d in brands_summary.items()
+                },
+                "field_gaps": field_gaps,
+                "ready_for_analysis": len(field_gaps) == 0,
             },
-            "brands": {
-                b: {
-                    **d,
-                    "visibility_rate": round(d["total_cited"] / d["total_prompts"], 3) if d["total_prompts"] else 0,
-                }
-                for b, d in brands_summary.items()
-            },
-            "field_gaps": field_gaps,
-            "ready_for_analysis": len(field_gaps) == 0,
-        }, indent=2)
+            indent=2,
+        )
 
     # ------------------------------------------------------------------
     # AppFollow tools
@@ -3164,6 +3401,7 @@ def create_mcp_server() -> FastMCP:
         limit: int = 50,
     ) -> str:
         from datetime import timedelta
+
         limit = max(1, min(limit, 200))
         cutoff = date.today() - timedelta(days=days)
 
@@ -3172,15 +3410,21 @@ def create_mcp_server() -> FastMCP:
             advertiser = repo.resolve(advertiser_name)
             if advertiser is None:
                 suggestions = repo.suggest(advertiser_name)
-                return json.dumps({
-                    "found": False,
-                    "advertiser_name": advertiser_name,
-                    "message": (
-                        f"No advertiser found for '{advertiser_name}'. Did you mean: "
-                        + ", ".join(f"'{s}'" for s in suggestions) + "?"
-                    ) if suggestions else f"No advertiser found for '{advertiser_name}'.",
-                    "did_you_mean": suggestions,
-                }, indent=2)
+                return json.dumps(
+                    {
+                        "found": False,
+                        "advertiser_name": advertiser_name,
+                        "message": (
+                            f"No advertiser found for '{advertiser_name}'. Did you mean: "
+                            + ", ".join(f"'{s}'" for s in suggestions)
+                            + "?"
+                        )
+                        if suggestions
+                        else f"No advertiser found for '{advertiser_name}'.",
+                        "did_you_mean": suggestions,
+                    },
+                    indent=2,
+                )
             resolved_name = advertiser.name
 
             q = (
@@ -3201,35 +3445,38 @@ def create_mcp_server() -> FastMCP:
                 q.order_by(desc(AppFollowReviewRecord.review_date)).limit(limit)
             ).all()
 
-        return json.dumps({
-            "found": bool(rows),
-            "resolved_name": resolved_name,
-            "filters": {
-                "country": country,
-                "os": os,
-                "sentiment": sentiment,
-                "min_rating": min_rating,
-                "days": days,
+        return json.dumps(
+            {
+                "found": bool(rows),
+                "resolved_name": resolved_name,
+                "filters": {
+                    "country": country,
+                    "os": os,
+                    "sentiment": sentiment,
+                    "min_rating": min_rating,
+                    "days": days,
+                },
+                "count": len(rows),
+                "reviews": [
+                    {
+                        "review_id": row.review_id,
+                        "review_date": row.review_date.isoformat(),
+                        "country": row.country,
+                        "os": row.os,
+                        "star_rating": _to_float(row.star_rating),
+                        "username": row.username,
+                        "title": row.title,
+                        "body": row.body,
+                        "sentiment": row.sentiment,
+                        "sentiment_score": _to_float(row.sentiment_score),
+                        "tags": row.tags,
+                        "app_version": row.app_version,
+                    }
+                    for row in rows
+                ],
             },
-            "count": len(rows),
-            "reviews": [
-                {
-                    "review_id":       row.review_id,
-                    "review_date":     row.review_date.isoformat(),
-                    "country":         row.country,
-                    "os":              row.os,
-                    "star_rating":     _to_float(row.star_rating),
-                    "username":        row.username,
-                    "title":           row.title,
-                    "body":            row.body,
-                    "sentiment":       row.sentiment,
-                    "sentiment_score": _to_float(row.sentiment_score),
-                    "tags":            row.tags,
-                    "app_version":     row.app_version,
-                }
-                for row in rows
-            ],
-        }, indent=2)
+            indent=2,
+        )
 
     @server.tool(
         name="get_appfollow_sentiment_trend",
@@ -3247,6 +3494,7 @@ def create_mcp_server() -> FastMCP:
         days: int = 90,
     ) -> str:
         from datetime import timedelta
+
         cutoff = date.today() - timedelta(days=days)
 
         with _session_factory()() as session:
@@ -3254,15 +3502,21 @@ def create_mcp_server() -> FastMCP:
             advertiser = repo.resolve(advertiser_name)
             if advertiser is None:
                 suggestions = repo.suggest(advertiser_name)
-                return json.dumps({
-                    "found": False,
-                    "advertiser_name": advertiser_name,
-                    "message": (
-                        f"No advertiser found for '{advertiser_name}'. Did you mean: "
-                        + ", ".join(f"'{s}'" for s in suggestions) + "?"
-                    ) if suggestions else f"No advertiser found for '{advertiser_name}'.",
-                    "did_you_mean": suggestions,
-                }, indent=2)
+                return json.dumps(
+                    {
+                        "found": False,
+                        "advertiser_name": advertiser_name,
+                        "message": (
+                            f"No advertiser found for '{advertiser_name}'. Did you mean: "
+                            + ", ".join(f"'{s}'" for s in suggestions)
+                            + "?"
+                        )
+                        if suggestions
+                        else f"No advertiser found for '{advertiser_name}'.",
+                        "did_you_mean": suggestions,
+                    },
+                    indent=2,
+                )
             resolved_name = advertiser.name
 
             q = (
@@ -3291,10 +3545,18 @@ def create_mcp_server() -> FastMCP:
         by_date: dict[str, dict] = {}
         for row in result_rows:
             d = row.review_date.isoformat()
-            entry = by_date.setdefault(d, {
-                "date": d, "positive": 0, "negative": 0, "neutral": 0,
-                "unknown": 0, "avg_rating": None, "total": 0,
-            })
+            entry = by_date.setdefault(
+                d,
+                {
+                    "date": d,
+                    "positive": 0,
+                    "negative": 0,
+                    "neutral": 0,
+                    "unknown": 0,
+                    "avg_rating": None,
+                    "total": 0,
+                },
+            )
             label = (row.sentiment or "unknown").lower()
             entry[label] = entry.get(label, 0) + int(row.count)
             entry["total"] += int(row.count)
@@ -3302,12 +3564,15 @@ def create_mcp_server() -> FastMCP:
                 entry["avg_rating"] = round(float(row.avg_rating), 2)
 
         trend = sorted(by_date.values(), key=lambda x: x["date"])
-        return json.dumps({
-            "found": bool(trend),
-            "resolved_name": resolved_name,
-            "filters": {"country": country, "os": os, "days": days},
-            "trend": trend,
-        }, indent=2)
+        return json.dumps(
+            {
+                "found": bool(trend),
+                "resolved_name": resolved_name,
+                "filters": {"country": country, "os": os, "days": days},
+                "trend": trend,
+            },
+            indent=2,
+        )
 
     @server.tool(
         name="get_appfollow_keyword_analysis",
@@ -3328,6 +3593,7 @@ def create_mcp_server() -> FastMCP:
         top_n: int = 20,
     ) -> str:
         from datetime import timedelta
+
         cutoff = date.today() - timedelta(days=days)
 
         with _session_factory()() as session:
@@ -3335,15 +3601,21 @@ def create_mcp_server() -> FastMCP:
             advertiser = repo.resolve(advertiser_name)
             if advertiser is None:
                 suggestions = repo.suggest(advertiser_name)
-                return json.dumps({
-                    "found": False,
-                    "advertiser_name": advertiser_name,
-                    "message": (
-                        f"No advertiser found for '{advertiser_name}'. Did you mean: "
-                        + ", ".join(f"'{s}'" for s in suggestions) + "?"
-                    ) if suggestions else f"No advertiser found for '{advertiser_name}'.",
-                    "did_you_mean": suggestions,
-                }, indent=2)
+                return json.dumps(
+                    {
+                        "found": False,
+                        "advertiser_name": advertiser_name,
+                        "message": (
+                            f"No advertiser found for '{advertiser_name}'. Did you mean: "
+                            + ", ".join(f"'{s}'" for s in suggestions)
+                            + "?"
+                        )
+                        if suggestions
+                        else f"No advertiser found for '{advertiser_name}'.",
+                        "did_you_mean": suggestions,
+                    },
+                    indent=2,
+                )
             resolved_name = advertiser.name
 
             q = (
@@ -3368,7 +3640,11 @@ def create_mcp_server() -> FastMCP:
             # Aggregate tags — use Python aggregation to handle both PostgreSQL and SQLite
             # and to handle cases where tags might not be pure arrays
             tag_q = (
-                select(AppFollowReviewRecord.tags, AppFollowReviewRecord.star_rating, AppFollowReviewRecord.sentiment)
+                select(
+                    AppFollowReviewRecord.tags,
+                    AppFollowReviewRecord.star_rating,
+                    AppFollowReviewRecord.sentiment,
+                )
                 .where(AppFollowReviewRecord.advertiser_name == resolved_name)
                 .where(AppFollowReviewRecord.review_date >= cutoff)
                 .where(AppFollowReviewRecord.tags.isnot(None))
@@ -3381,15 +3657,22 @@ def create_mcp_server() -> FastMCP:
             tag_rows = session.execute(tag_q).all()
             tag_stats: dict[str, dict] = {}
             import json as json_lib
+
             for row in tag_rows:
                 try:
-                    tags = json_lib.loads(row.tags) if isinstance(row.tags, str) else (row.tags or [])
+                    tags = (
+                        json_lib.loads(row.tags) if isinstance(row.tags, str) else (row.tags or [])
+                    )
                 except (json_lib.JSONDecodeError, TypeError):
                     tags = []
                 if isinstance(tags, list):
                     for tag in tags:
                         if tag not in tag_stats:
-                            tag_stats[tag] = {"count": 0, "ratings": [], "sentiments": {"positive": 0, "negative": 0, "neutral": 0}}
+                            tag_stats[tag] = {
+                                "count": 0,
+                                "ratings": [],
+                                "sentiments": {"positive": 0, "negative": 0, "neutral": 0},
+                            }
                         tag_stats[tag]["count"] += 1
                         if row.star_rating is not None:
                             tag_stats[tag]["ratings"].append(row.star_rating)
@@ -3397,24 +3680,31 @@ def create_mcp_server() -> FastMCP:
                             tag_stats[tag]["sentiments"][row.sentiment] += 1
 
             # Sort by count and limit
-            sorted_tags = sorted(tag_stats.items(), key=lambda x: x[1]["count"], reverse=True)[:top_n]
+            sorted_tags = sorted(tag_stats.items(), key=lambda x: x[1]["count"], reverse=True)[
+                :top_n
+            ]
             keywords = [
                 {
                     "keyword": tag,
                     "count": stats["count"],
-                    "avg_rating": round(sum(stats["ratings"]) / len(stats["ratings"]), 2) if stats["ratings"] else None,
+                    "avg_rating": round(sum(stats["ratings"]) / len(stats["ratings"]), 2)
+                    if stats["ratings"]
+                    else None,
                     "sentiment_split": stats["sentiments"],
                 }
                 for tag, stats in sorted_tags
             ]
 
-        return json.dumps({
-            "found": bool(keywords),
-            "resolved_name": resolved_name,
-            "filters": {"country": country, "sentiment": sentiment, "days": days},
-            "total_reviews_with_tags": total_reviews,
-            "top_keywords": keywords,
-        }, indent=2)
+        return json.dumps(
+            {
+                "found": bool(keywords),
+                "resolved_name": resolved_name,
+                "filters": {"country": country, "sentiment": sentiment, "days": days},
+                "total_reviews_with_tags": total_reviews,
+                "top_keywords": keywords,
+            },
+            indent=2,
+        )
 
     @server.tool(
         name="compare_appfollow_reviews",
@@ -3432,6 +3722,7 @@ def create_mcp_server() -> FastMCP:
         days: int = 90,
     ) -> str:
         from datetime import timedelta
+
         names = [n.strip() for n in advertiser_names.split(",") if n.strip()]
         if not names:
             return json.dumps({"found": False, "message": "No advertiser names provided."})
@@ -3461,7 +3752,10 @@ def create_mcp_server() -> FastMCP:
                 sentiment_rows = session.execute(q).all()
 
                 if not sentiment_rows:
-                    results[resolved] = {"found": False, "message": "No AppFollow data collected yet."}
+                    results[resolved] = {
+                        "found": False,
+                        "message": "No AppFollow data collected yet.",
+                    }
                     continue
 
                 tag_q = (
@@ -3474,10 +3768,12 @@ def create_mcp_server() -> FastMCP:
                     tag_q = tag_q.where(AppFollowReviewRecord.country == country.upper())
                 tag_counts: dict[str, int] = {}
                 for (tags,) in session.execute(tag_q).all():
-                    for t in (tags or []):
+                    for t in tags or []:
                         if t:
                             tag_counts[t] = tag_counts.get(t, 0) + 1
-                top_tags = [k for k, _ in sorted(tag_counts.items(), key=lambda x: x[1], reverse=True)[:10]]
+                top_tags = [
+                    k for k, _ in sorted(tag_counts.items(), key=lambda x: x[1], reverse=True)[:10]
+                ]
 
                 sentiment_dist: dict[str, int] = {}
                 total_reviews = 0
@@ -3490,11 +3786,13 @@ def create_mcp_server() -> FastMCP:
                         avg_ratings.append(float(row.avg_rating))
 
                 results[resolved] = {
-                    "found":                 True,
-                    "total_reviews":         total_reviews,
-                    "avg_rating":            round(sum(avg_ratings) / len(avg_ratings), 2) if avg_ratings else None,
+                    "found": True,
+                    "total_reviews": total_reviews,
+                    "avg_rating": round(sum(avg_ratings) / len(avg_ratings), 2)
+                    if avg_ratings
+                    else None,
                     "sentiment_distribution": sentiment_dist,
-                    "top_keywords":          top_tags,
+                    "top_keywords": top_tags,
                 }
 
         found_names = [n for n, d in results.items() if d.get("found")]
@@ -3509,13 +3807,13 @@ def create_mcp_server() -> FastMCP:
                 return d.get("sentiment_distribution", {}).get("positive", 0) / total
 
             gap_analysis = {
-                "root":             root,
-                "competitors":      competitors,
+                "root": root,
+                "competitors": competitors,
                 "rating_gaps": {
                     comp: {
-                        "root_avg_rating":       root_data.get("avg_rating"),
+                        "root_avg_rating": root_data.get("avg_rating"),
                         "competitor_avg_rating": results[comp].get("avg_rating"),
-                        "delta":                 (
+                        "delta": (
                             round(
                                 (results[comp].get("avg_rating") or 0)
                                 - (root_data.get("avg_rating") or 0),
@@ -3530,9 +3828,9 @@ def create_mcp_server() -> FastMCP:
                 },
                 "positive_rate_gaps": {
                     comp: {
-                        "root_positive_rate":       round(_positive_rate(root_data), 3),
+                        "root_positive_rate": round(_positive_rate(root_data), 3),
                         "competitor_positive_rate": round(_positive_rate(results[comp]), 3),
-                        "delta":                    round(
+                        "delta": round(
                             _positive_rate(results[comp]) - _positive_rate(root_data), 3
                         ),
                     }
@@ -3551,13 +3849,16 @@ def create_mcp_server() -> FastMCP:
                 ),
             }
 
-        return json.dumps({
-            "found":        bool(found_names),
-            "country":      country,
-            "days":         days,
-            "brands":       results,
-            "gap_analysis": gap_analysis,
-        }, indent=2)
+        return json.dumps(
+            {
+                "found": bool(found_names),
+                "country": country,
+                "days": days,
+                "brands": results,
+                "gap_analysis": gap_analysis,
+            },
+            indent=2,
+        )
 
     return server
 

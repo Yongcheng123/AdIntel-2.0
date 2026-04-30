@@ -29,6 +29,11 @@ class APIKeyGate:
     def __init__(self, app):
         self.app = app
         self.expected_key = os.getenv("MCP_API_KEY") or os.getenv("ADINTEL_MCP_API_KEY")
+        self.oauth_enabled = bool(
+            os.getenv("BASE_URL")
+            and os.getenv("GOOGLE_CLIENT_ID")
+            and os.getenv("GOOGLE_CLIENT_SECRET")
+        )
 
     @staticmethod
     def _extract_key(scope) -> str | None:
@@ -48,7 +53,7 @@ class APIKeyGate:
         return None
 
     async def __call__(self, scope, receive, send):
-        if scope.get("type") != "http" or not self.expected_key:
+        if scope.get("type") != "http" or not self.expected_key or self.oauth_enabled:
             await self.app(scope, receive, send)
             return
 
@@ -71,4 +76,3 @@ class APIKeyGate:
 
 
 app = APIKeyGate(create_mcp_server().streamable_http_app())
-
