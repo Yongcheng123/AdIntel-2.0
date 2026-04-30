@@ -53,9 +53,10 @@ class APIKeyGate:
         return None
 
     async def __call__(self, scope, receive, send):
+        path = str(scope.get("path") or "").rstrip("/")
         if (
             scope.get("type") != "http"
-            or scope.get("path") == "/health"
+            or path == "/health"
             or not self.expected_key
             or self.oauth_enabled
         ):
