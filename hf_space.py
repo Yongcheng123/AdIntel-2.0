@@ -22,7 +22,7 @@ _src = Path(__file__).resolve().parent / "src"
 if str(_src) not in sys.path:
     sys.path.insert(0, str(_src))
 
-from adintel.mcp.server import create_mcp_server
+from adintel.mcp.server import create_mcp_server  # noqa: E402
 
 
 class APIKeyGate:
@@ -53,7 +53,12 @@ class APIKeyGate:
         return None
 
     async def __call__(self, scope, receive, send):
-        if scope.get("type") != "http" or not self.expected_key or self.oauth_enabled:
+        if (
+            scope.get("type") != "http"
+            or scope.get("path") == "/health"
+            or not self.expected_key
+            or self.oauth_enabled
+        ):
             await self.app(scope, receive, send)
             return
 
