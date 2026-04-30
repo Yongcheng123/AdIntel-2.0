@@ -4,6 +4,9 @@ This repository can be deployed to Coolify as a Dockerfile-based application.
 It is meant to host the MCP server only. Keep the worker on your local machine
 or another remote desktop that has the logged-in browser session.
 
+For the current Google OAuth production runbook, see
+`Oauth/AdIntel MCP OAuth Coolify 运行手册.md`.
+
 ## What To Deploy
 
 - Use the root `Dockerfile`
